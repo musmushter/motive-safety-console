@@ -1,0 +1,38 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Sensitive authentication & browser session data
+data/browser_profile/
+data/motive_auth.json
+
+# Runtime captured dashcam snapshots
+snapshots/*
+!snapshots/.gitkeep
+
+# Runtime logs & dynamic data files
+data/violations.json
+data/driver_mappings.json
+data/fleet_associations.json
+data/offline_cameras.json
+*.log
+
+# Editor & OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

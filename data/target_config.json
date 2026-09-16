@@ -1,0 +1,12 @@
+{
+  "associations": [
+    "HEART",
+    "Unassigned"
+  ],
+  "motions": [
+    "transit",
+    "idle"
+  ],
+  "require_camera": true,
+  "exclude_offline": true
+}

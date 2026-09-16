@@ -1,0 +1,1968 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Roadside Fleet Safety Console</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    .camera-box {
+      aspect-ratio: 16/9;
+      background: #0f172a;
+    }
+    .badge-live {
+      background: rgba(16, 185, 129, 0.9);
+      backdrop-filter: blur(4px);
+    }
+    .badge-stale {
+      background: rgba(239, 68, 68, 0.85);
+      backdrop-filter: blur(4px);
+    }
+    .badge-timeout {
+      background: rgba(245, 158, 11, 0.9);
+      backdrop-filter: blur(4px);
+    }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col font-sans antialiased">
+
+  <!-- Header -->
+  <header class="bg-slate-800/90 border-b border-slate-700 sticky top-0 z-30 backdrop-blur px-6 py-3.5 shadow-md">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <div class="bg-amber-500 text-slate-950 p-2.5 rounded-xl font-bold flex items-center justify-center shadow-lg shadow-amber-500/20">
+          <i class="fa-solid fa-video text-lg"></i>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+            Safety Monitoring Console
+            <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">Motive Fleet</span>
+          </h1>
+          <p class="text-xs text-slate-400">
+            Fleet Safety &amp; Camera Operations Console
+          </p>
+        </div>
+      </div>
+
+      <!-- Live status & Actions -->
+      <div class="flex items-center gap-3">
+        <div id="connectionPill" class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-700/60 border border-slate-600 text-xs">
+          <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
+          <span id="connectionText">Checking Motive...</span>
+        </div>
+
+        <button onclick="openMotiveLogin()" class="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 border border-slate-600 text-xs font-medium text-slate-200 flex items-center gap-1.5 transition">
+          <i class="fa-solid fa-arrow-up-right-from-square"></i> Open Motive Browser
+        </button>
+
+        <button onclick="syncVehicles(true)" class="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 border border-slate-600 text-xs font-medium text-slate-200 flex items-center gap-1.5 transition">
+          <i class="fa-solid fa-arrows-rotate"></i> Sync Fleet
+        </button>
+
+        <div class="flex items-center gap-1.5 bg-slate-700/80 border border-slate-600 rounded-lg px-2.5 py-1 text-xs">
+          <i class="fa-solid fa-bolt text-amber-400"></i>
+          <label for="concurrencySelect" class="text-slate-300 font-medium">Workers:</label>
+          <select id="concurrencySelect" onchange="saveUserPreferences()" class="bg-slate-800 border border-slate-600 text-amber-400 font-bold rounded px-1.5 py-0.5 text-xs focus:outline-none focus:border-amber-400">
+            <option value="4" selected>4 Parallel</option>
+            <option value="3">3 Parallel</option>
+            <option value="2">2 Parallel</option>
+            <option value="1">1 Sequential</option>
+          </select>
+        </div>
+
+        <button onclick="refreshAllTargetCameras(false)" class="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-lg shadow-amber-500/20 transition">
+          <i class="fa-solid fa-camera-rotate"></i> Refresh All Target Cameras
+        </button>
+
+        <button id="stopBatchBtn" onclick="stopBatchRefresh()" class="hidden px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-rose-600/20 transition animate-pulse" title="Stop running batch refresh">
+          <i class="fa-solid fa-stop"></i> Stop
+        </button>
+
+        <button onclick="refreshAllTargetCameras(true)" title="Retry all cameras including previously flagged powered-off cameras" class="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 border border-slate-600 text-xs font-medium text-slate-200 flex items-center gap-1.5 transition">
+          <i class="fa-solid fa-rotate text-amber-400"></i> Retry All (Inc. Offline)
+        </button>
+
+        <button onclick="openViolationsModal()" class="px-3 py-1.5 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 text-xs font-semibold flex items-center gap-1.5 transition">
+          <i class="fa-solid fa-triangle-exclamation"></i> Violations Log (<span id="violationCount">0</span>)
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Live Sub-banner -->
+  <div id="statusBar" class="bg-slate-800/40 border-b border-slate-800 px-6 py-2 text-xs text-slate-400 flex items-center justify-between">
+    <div class="max-w-7xl mx-auto w-full flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <i class="fa-solid fa-circle-info text-amber-400"></i>
+        <span id="statusMessage">Console ready. Click "Refresh All Target Cameras" or sync fleet.</span>
+      </div>
+      <div class="flex items-center gap-3 text-xs">
+        <div class="flex items-center gap-1.5">
+          <label for="autoRefreshSelect" class="text-slate-400 font-medium">Auto-refresh:</label>
+          <select id="autoRefreshSelect" onchange="onAutoRefreshChange()" class="bg-slate-700 border border-slate-600 text-slate-200 rounded px-2 py-0.5 text-xs font-semibold focus:outline-none focus:border-amber-400">
+            <option value="0">Off</option>
+            <option value="5">Every 5m</option>
+            <option value="10">Every 10m</option>
+            <option value="15">Every 15m</option>
+            <option value="20">Every 20m</option>
+            <option value="25">Every 25m</option>
+            <option value="30">Every 30m</option>
+            <option value="35">Every 35m</option>
+            <option value="40">Every 40m</option>
+          </select>
+        </div>
+
+        <!-- Live Countdown Indicator -->
+        <div id="countdownBadge" class="hidden items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 font-mono text-xs font-bold shadow-sm">
+          <i class="fa-regular fa-clock text-[11px] text-amber-400"></i>
+          <span id="countdownDisplay">05:00</span>
+          <button id="countdownPauseBtn" onclick="toggleAutoRefreshPause()" title="Pause / Resume countdown" class="ml-1 text-amber-400 hover:text-white p-0.5 rounded transition">
+            <i class="fa-solid fa-pause text-[10px]" id="countdownPauseIcon"></i>
+          </button>
+        </div>
+
+        <span id="targetCountBadge" class="text-slate-300 font-semibold">0 target vehicles</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <main class="max-w-7xl mx-auto px-6 py-6 w-full flex-1">
+    <!-- Filter & Sort Control Center -->
+    <div class="bg-slate-800/80 border border-slate-700/90 rounded-xl p-4 mb-6 shadow-md relative z-30">
+      <!-- Top Row: Search, Multi-Selects, Targets Only, Sort & Reset -->
+      <div class="flex flex-wrap items-center justify-between gap-2.5 mb-3">
+        <!-- Search Input -->
+        <div class="relative flex-1 min-w-[200px] max-w-xs">
+          <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-slate-400 text-xs"></i>
+          <input type="text" id="searchInput" oninput="onSearchInput()" placeholder="Search unit, driver, association..." class="bg-slate-900/90 border border-slate-700 rounded-lg pl-8 pr-7 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 w-full transition">
+          <button id="clearSearchBtn" onclick="clearSearch()" class="hidden absolute right-2.5 top-2 text-slate-500 hover:text-slate-300 text-xs" title="Clear search">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+
+        <!-- Filter Controls Container -->
+        <div class="flex flex-wrap items-center gap-2 text-xs">
+          <!-- Association Multi-Select Dropdown -->
+          <div class="relative multi-dropdown">
+            <button type="button" onclick="toggleMultiDropdown('assocDropdown', event)" id="assocDropdownBtn" class="flex items-center gap-1.5 bg-slate-900/90 border border-slate-700 hover:border-slate-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 transition" title="Filter by Association / Group">
+              <i class="fa-solid fa-building-user text-amber-400"></i>
+              <span id="assocBtnLabel" class="font-medium">Assoc: All</span>
+              <i class="fa-solid fa-chevron-down text-[9px] text-slate-400 ml-0.5"></i>
+            </button>
+            <div id="assocDropdown" class="hidden absolute left-0 top-full mt-1.5 w-64 bg-slate-900/95 border border-slate-700 rounded-xl shadow-2xl p-2.5 z-50 text-xs backdrop-blur-md">
+              <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800 px-1">
+                <span class="font-bold text-[11px] text-slate-300 uppercase tracking-wider">Association</span>
+                <div class="flex items-center gap-1.5 text-[10px]">
+                  <button type="button" onclick="toggleAllCheckboxes('assocFilter', true)" class="text-amber-400 hover:underline">Select All</button>
+                  <span class="text-slate-600">&bull;</span>
+                  <button type="button" onclick="toggleAllCheckboxes('assocFilter', false)" class="text-slate-400 hover:underline">Clear</button>
+                </div>
+              </div>
+              <div class="space-y-1 max-h-52 overflow-y-auto pr-1" id="assocCheckboxList">
+                <label class="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-slate-800 cursor-pointer select-none">
+                  <div class="flex items-center gap-2">
+                    <input type="checkbox" name="assocFilter" value="HEART" onchange="onFilterCriteriaChanged()" checked class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+                    <span class="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold text-[10px]">HEART</span>
+                  </div>
+                  <span id="countAssoc-HEART" class="text-[10px] text-slate-400 font-semibold">(25)</span>
+                </label>
+                <label class="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-slate-800 cursor-pointer select-none">
+                  <div class="flex items-center gap-2">
+                    <input type="checkbox" name="assocFilter" value="ALL AMERICAN" onchange="onFilterCriteriaChanged()" checked class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+                    <span class="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 font-bold text-[10px]">ALL AMERICAN</span>
+                  </div>
+                  <span id="countAssoc-ALL_AMERICAN" class="text-[10px] text-slate-400 font-semibold">(23)</span>
+                </label>
+                <label class="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-slate-800 cursor-pointer select-none">
+                  <div class="flex items-center gap-2">
+                    <input type="checkbox" name="assocFilter" value="BMW" onchange="onFilterCriteriaChanged()" checked class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+                    <span class="px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30 font-bold text-[10px]">BMW</span>
+                  </div>
+                  <span id="countAssoc-BMW" class="text-[10px] text-slate-400 font-semibold">(5)</span>
+                </label>
+                <label class="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-slate-800 cursor-pointer select-none">
+                  <div class="flex items-center gap-2">
+                    <input type="checkbox" name="assocFilter" value="HOUSTON TOWING" onchange="onFilterCriteriaChanged()" checked class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+                    <span class="px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold text-[10px]">HOUSTON TOWING</span>
+                  </div>
+                  <span id="countAssoc-HOUSTON_TOWING" class="text-[10px] text-slate-400 font-semibold">(0)</span>
+                </label>
+                <label class="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-slate-800 cursor-pointer select-none">
+                  <div class="flex items-center gap-2">
+                    <input type="checkbox" name="assocFilter" value="Unassigned" onchange="onFilterCriteriaChanged()" checked class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+                    <span class="px-1.5 py-0.5 rounded bg-slate-700 text-slate-300 font-semibold text-[10px]">Unassigned</span>
+                  </div>
+                  <span id="countAssoc-Unassigned" class="text-[10px] text-slate-400 font-semibold">(10)</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Targets Only Toggle Button -->
+          <button type="button" onclick="toggleTargetsOnly()" id="targetsOnlyBtn" data-active="false" title="Toggle priority target monitored vehicles" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-700 bg-slate-900/90 text-slate-300 hover:text-white transition text-xs font-semibold">
+            <i class="fa-solid fa-crosshairs text-slate-400"></i>
+            <span>Targets Only</span>
+          </button>
+
+          <!-- Target Configuration Rules Button -->
+          <button type="button" onclick="openTargetConfigModal()" id="targetRulesBtn" title="Customize which groups and motion states define target vehicles" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 transition text-xs font-semibold">
+            <i class="fa-solid fa-sliders text-amber-400"></i>
+            <span>Target Rules</span>
+          </button>
+
+          <!-- Motion Multi-Select Dropdown -->
+          <div class="relative multi-dropdown">
+            <button type="button" onclick="toggleMultiDropdown('motionDropdown', event)" id="motionDropdownBtn" class="flex items-center gap-1.5 bg-slate-900/90 border border-slate-700 hover:border-slate-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 transition" title="Filter by Motion Status">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+              <span id="motionBtnLabel" class="font-medium">Motion: All</span>
+              <i class="fa-solid fa-chevron-down text-[9px] text-slate-400 ml-0.5"></i>
+            </button>
+            <div id="motionDropdown" class="hidden absolute left-0 top-full mt-1.5 w-60 bg-slate-900/95 border border-slate-700 rounded-xl shadow-2xl p-2.5 z-50 text-xs backdrop-blur-md">
+              <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800 px-1">
+                <span class="font-bold text-[11px] text-slate-300 uppercase tracking-wider">Motion Status</span>
+                <div class="flex items-center gap-1.5 text-[10px]">
+                  <button type="button" onclick="toggleAllCheckboxes('motionFilter', true)" class="text-amber-400 hover:underline">Select All</button>
+                  <span class="text-slate-600">&bull;</span>
+                  <button type="button" onclick="toggleAllCheckboxes('motionFilter', false)" class="text-slate-400 hover:underline">Clear</button>
+                </div>
+              </div>
+              <div class="space-y-1">
+                <label class="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-slate-800 cursor-pointer select-none">
+                  <div class="flex items-center gap-2">
+                    <input type="checkbox" name="motionFilter" value="transit" onchange="onFilterCriteriaChanged()" checked class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                    <span>In Transit / Moving</span>
+                  </div>
+                  <span id="countMotionTransit" class="text-[10px] text-slate-400 font-semibold">0</span>
+                </label>
+                <label class="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-slate-800 cursor-pointer select-none">
+                  <div class="flex items-center gap-2">
+                    <input type="checkbox" name="motionFilter" value="idle" onchange="onFilterCriteriaChanged()" checked class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+                    <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                    <span>Idling</span>
+                  </div>
+                  <span id="countMotionIdle" class="text-[10px] text-slate-400 font-semibold">0</span>
+                </label>
+                <label class="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-slate-800 cursor-pointer select-none">
+                  <div class="flex items-center gap-2">
+                    <input type="checkbox" name="motionFilter" value="stationary" onchange="onFilterCriteriaChanged()" checked class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+                    <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                    <span>Stationary / In Service</span>
+                  </div>
+                  <span id="countMotionStationary" class="text-[10px] text-slate-400 font-semibold">0</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Camera / Connection Multi-Select Dropdown -->
+          <div class="relative multi-dropdown">
+            <button type="button" onclick="toggleMultiDropdown('cameraDropdown', event)" id="cameraDropdownBtn" class="flex items-center gap-1.5 bg-slate-900/90 border border-slate-700 hover:border-slate-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 transition" title="Filter by Camera State">
+              <i class="fa-solid fa-video text-amber-400"></i>
+              <span id="cameraBtnLabel" class="font-medium">Camera: All</span>
+              <i class="fa-solid fa-chevron-down text-[9px] text-slate-400 ml-0.5"></i>
+            </button>
+            <div id="cameraDropdown" class="hidden absolute left-0 top-full mt-1.5 w-64 bg-slate-900/95 border border-slate-700 rounded-xl shadow-2xl p-2.5 z-50 text-xs backdrop-blur-md">
+              <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800 px-1">
+                <span class="font-bold text-[11px] text-slate-300 uppercase tracking-wider">Camera State</span>
+                <div class="flex items-center gap-1.5 text-[10px]">
+                  <button type="button" onclick="toggleAllCheckboxes('cameraFilter', true)" class="text-amber-400 hover:underline">Select All</button>
+                  <span class="text-slate-600">&bull;</span>
+                  <button type="button" onclick="toggleAllCheckboxes('cameraFilter', false)" class="text-slate-400 hover:underline">Clear</button>
+                </div>
+              </div>
+              <div class="space-y-1">
+                <label class="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-slate-800 cursor-pointer select-none">
+                  <div class="flex items-center gap-2">
+                    <input type="checkbox" name="cameraFilter" value="active" onchange="onFilterCriteriaChanged()" checked class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+                    <i class="fa-solid fa-shield-halved text-emerald-400 text-[10px]"></i>
+                    <span>Active (Online)</span>
+                  </div>
+                  <span id="countCamActive" class="text-[10px] text-slate-400 font-semibold">0</span>
+                </label>
+                <label class="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-slate-800 cursor-pointer select-none">
+                  <div class="flex items-center gap-2">
+                    <input type="checkbox" name="cameraFilter" value="powered_off" onchange="onFilterCriteriaChanged()" checked class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+                    <i class="fa-solid fa-power-off text-rose-400 text-[10px]"></i>
+                    <span>Powered Off / Dormant</span>
+                  </div>
+                  <span id="countCamOffline" class="text-[10px] text-slate-400 font-semibold">0</span>
+                </label>
+                <label class="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-slate-800 cursor-pointer select-none">
+                  <div class="flex items-center gap-2">
+                    <input type="checkbox" name="cameraFilter" value="has_images" onchange="onFilterCriteriaChanged()" checked class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+                    <i class="fa-solid fa-camera text-blue-400 text-[10px]"></i>
+                    <span>With Captured Frames</span>
+                  </div>
+                  <span id="countCamImages" class="text-[10px] text-slate-400 font-semibold">0</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Sort Order Select -->
+          <div class="flex items-center gap-1.5">
+            <label for="sortSelect" class="text-slate-400 font-medium"><i class="fa-solid fa-arrow-down-short-wide text-amber-400"></i></label>
+            <select id="sortSelect" onchange="onSortChange()" class="bg-slate-900/90 border border-slate-700 text-amber-400 font-semibold rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-amber-500 hover:border-slate-600 transition">
+              <option value="updated_desc" selected>Updated: Newest First</option>
+              <option value="updated_asc">Updated: Oldest / Stale First</option>
+              <option value="name_asc">Unit Name: A &rarr; Z</option>
+              <option value="name_desc">Unit Name: Z &rarr; A</option>
+              <option value="driver_asc">Driver Name: A &rarr; Z</option>
+              <option value="status_priority">Status: In Transit &rarr; Idling</option>
+              <option value="camera_priority">Camera: Live &rarr; Captured &rarr; Offline</option>
+            </select>
+          </div>
+
+          <!-- Reset Button -->
+          <button onclick="resetAllFilters()" id="resetFiltersBtn" title="Reset all filters and sorting to default" class="px-2.5 py-1.5 rounded-lg bg-slate-700/80 hover:bg-slate-700 border border-slate-600 text-slate-300 hover:text-white transition flex items-center gap-1 text-xs">
+            <i class="fa-solid fa-filter-circle-xmark"></i> Reset
+          </button>
+        </div>
+      </div>
+
+      <!-- Bottom Row: Results Count & Legend -->
+      <div class="flex items-center justify-between gap-3 pt-3 border-t border-slate-700/60 text-xs">
+        <div id="resultsSummary" class="text-slate-400 font-medium">
+          Showing <strong id="showingCount" class="text-white font-bold">0</strong> of <strong id="totalScopeCount" class="text-slate-300 font-bold">0</strong> vehicles
+        </div>
+        <div class="flex items-center gap-2 text-[11px] text-slate-500">
+          <span><span class="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-1"></span> Driver View</span>
+          <span class="text-slate-700">&bull;</span>
+          <span><span class="inline-block w-2 h-2 rounded-full bg-blue-500 mr-1"></span> Road View</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Vehicles Grid -->
+    <div id="vehiclesGrid" class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+      <!-- Loading Skeleton -->
+      <div class="col-span-full py-16 text-center text-slate-500">
+        <i class="fa-solid fa-spinner fa-spin text-3xl mb-3 text-amber-500"></i>
+        <p class="text-sm">Connecting to Motive & loading active fleet...</p>
+      </div>
+    </div>
+  </main>
+
+  <!-- Image Lightbox Modal -->
+  <div id="imageModal" class="fixed inset-0 bg-black/90 z-50 hidden flex items-center justify-center p-4 backdrop-blur-sm" onclick="closeImageModal()">
+    <div class="relative max-w-5xl w-full bg-slate-900 border border-slate-700 rounded-xl overflow-hidden shadow-2xl" onclick="event.stopPropagation()">
+      <div class="p-3 border-b border-slate-800 flex justify-between items-center bg-slate-800/80">
+        <h3 id="modalTitle" class="text-sm font-bold text-slate-200">Camera Inspection</h3>
+        <button onclick="closeImageModal()" class="text-slate-400 hover:text-white p-1 rounded-lg">
+          <i class="fa-solid fa-xmark text-lg"></i>
+        </button>
+      </div>
+      <div class="p-4 flex items-center justify-center bg-black max-h-[80vh] overflow-hidden">
+        <img id="modalImage" src="" alt="Snapshot Detail" class="max-w-full max-h-[75vh] object-contain rounded">
+      </div>
+    </div>
+  </div>
+
+  <!-- Violations Log Modal -->
+  <div id="violationsModal" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center p-4 backdrop-blur-sm" onclick="closeViolationsModal()">
+    <div class="relative max-w-4xl w-full bg-slate-800 border border-slate-700 rounded-xl overflow-hidden shadow-2xl" onclick="event.stopPropagation()">
+      <div class="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-750">
+        <h3 class="text-base font-bold text-slate-100 flex items-center gap-2">
+          <i class="fa-solid fa-triangle-exclamation text-red-400"></i> Safety Compliance & Violation Records
+        </h3>
+        <div class="flex items-center gap-2">
+          <a href="/api/violations/export" download class="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs rounded-lg flex items-center gap-1.5 transition">
+            <i class="fa-solid fa-file-csv"></i> Export CSV
+          </a>
+          <button onclick="closeViolationsModal()" class="text-slate-400 hover:text-white p-1 rounded-lg">
+            <i class="fa-solid fa-xmark text-lg"></i>
+          </button>
+        </div>
+      </div>
+      <div class="p-4 max-h-[60vh] overflow-y-auto">
+        <table class="w-full text-left text-xs border-collapse">
+          <thead>
+            <tr class="border-b border-slate-700 text-slate-400 bg-slate-900/50">
+              <th class="py-2.5 px-3">Timestamp</th>
+              <th class="py-2.5 px-3">Vehicle</th>
+              <th class="py-2.5 px-3">Driver</th>
+              <th class="py-2.5 px-3">Seatbelt</th>
+              <th class="py-2.5 px-3">Phone</th>
+              <th class="py-2.5 px-3">In Cab</th>
+              <th class="py-2.5 px-3">Road State</th>
+              <th class="py-2.5 px-3">Notes</th>
+            </tr>
+          </thead>
+          <tbody id="violationsTableBody" class="divide-y divide-slate-700/60 text-slate-300">
+            <!-- Rows injected via JS -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Target Configuration Rules Modal -->
+  <div id="targetConfigModal" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center p-4 backdrop-blur-sm" onclick="closeTargetConfigModal()">
+    <div class="relative max-w-lg w-full bg-slate-800 border border-slate-700 rounded-xl overflow-hidden shadow-2xl" onclick="event.stopPropagation()">
+      <div class="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-750">
+        <h3 class="text-base font-bold text-slate-100 flex items-center gap-2">
+          <i class="fa-solid fa-sliders text-amber-400"></i> Target Rules &amp; Automation
+        </h3>
+        <button onclick="closeTargetConfigModal()" class="text-slate-400 hover:text-white p-1 rounded-lg">
+          <i class="fa-solid fa-xmark text-lg"></i>
+        </button>
+      </div>
+      <div class="p-5 space-y-4 max-h-[70vh] overflow-y-auto text-xs text-slate-300">
+        <div>
+          <p class="text-slate-400 mb-3 text-[11px]">
+            Define which vehicles qualify as priority <strong>Targets</strong>. Targets are highlighted, filtered with the "Targets Only" button, and refreshed during batch and auto-refreshes.
+          </p>
+        </div>
+
+        <!-- Target Associations -->
+        <div class="bg-slate-900/60 border border-slate-700/80 rounded-lg p-3">
+          <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
+            <span class="font-bold text-[11px] text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+              <i class="fa-solid fa-building-user text-amber-400"></i> Target Associations
+            </span>
+            <div class="flex items-center gap-1.5 text-[10px]">
+              <button type="button" onclick="toggleAllTargetCheckboxes('targetAssocCfg', true)" class="text-amber-400 hover:underline">All</button>
+              <span class="text-slate-600">&bull;</span>
+              <button type="button" onclick="toggleAllTargetCheckboxes('targetAssocCfg', false)" class="text-slate-400 hover:underline">Clear</button>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="flex items-center gap-2 p-1.5 rounded hover:bg-slate-800 cursor-pointer">
+              <input type="checkbox" name="targetAssocCfg" value="HEART" class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+              <span class="font-bold text-rose-300">HEART</span>
+            </label>
+            <label class="flex items-center gap-2 p-1.5 rounded hover:bg-slate-800 cursor-pointer">
+              <input type="checkbox" name="targetAssocCfg" value="ALL AMERICAN" class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+              <span class="font-bold text-blue-300">ALL AMERICAN</span>
+            </label>
+            <label class="flex items-center gap-2 p-1.5 rounded hover:bg-slate-800 cursor-pointer">
+              <input type="checkbox" name="targetAssocCfg" value="BMW" class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+              <span class="font-bold text-sky-300">BMW</span>
+            </label>
+            <label class="flex items-center gap-2 p-1.5 rounded hover:bg-slate-800 cursor-pointer">
+              <input type="checkbox" name="targetAssocCfg" value="HOUSTON TOWING" class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+              <span class="font-bold text-purple-300">HOUSTON TOWING</span>
+            </label>
+            <label class="flex items-center gap-2 p-1.5 rounded hover:bg-slate-800 cursor-pointer">
+              <input type="checkbox" name="targetAssocCfg" value="Unassigned" class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+              <span class="font-medium text-slate-300">Unassigned</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Target Motion States -->
+        <div class="bg-slate-900/60 border border-slate-700/80 rounded-lg p-3">
+          <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
+            <span class="font-bold text-[11px] text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+              <i class="fa-solid fa-truck-moving text-emerald-400"></i> Target Motion States
+            </span>
+          </div>
+          <div class="space-y-1.5">
+            <label class="flex items-center justify-between p-1.5 rounded hover:bg-slate-800 cursor-pointer">
+              <div class="flex items-center gap-2">
+                <input type="checkbox" name="targetMotionCfg" value="transit" class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                <span class="font-medium">In Transit / Moving</span>
+              </div>
+              <span class="text-[10px] text-slate-500 font-mono">Recommended</span>
+            </label>
+            <label class="flex items-center justify-between p-1.5 rounded hover:bg-slate-800 cursor-pointer">
+              <div class="flex items-center gap-2">
+                <input type="checkbox" name="targetMotionCfg" value="idle" class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+                <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+                <span class="font-medium">Idling</span>
+              </div>
+              <span class="text-[10px] text-slate-500 font-mono">Recommended</span>
+            </label>
+            <label class="flex items-center justify-between p-1.5 rounded hover:bg-slate-800 cursor-pointer">
+              <div class="flex items-center gap-2">
+                <input type="checkbox" name="targetMotionCfg" value="stationary" class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+                <span class="w-2 h-2 rounded-full bg-slate-400"></span>
+                <span class="font-medium">Stationary / Parked</span>
+              </div>
+              <span class="text-[10px] text-amber-400/80 font-mono">Include in auto-refresh</span>
+            </label>
+          </div>
+          <p class="text-[10px] text-slate-400 mt-2 italic">
+            * By default, stationary vehicles are skipped during auto-refresh to conserve bandwidth and time. Checking "Stationary" overrides this and includes stationary vehicles in auto-refresh.
+          </p>
+        </div>
+
+        <!-- Camera Requirements -->
+        <div class="bg-slate-900/60 border border-slate-700/80 rounded-lg p-3 space-y-2">
+          <span class="font-bold text-[11px] text-slate-200 uppercase tracking-wider block border-b border-slate-800 pb-1 flex items-center gap-1.5">
+            <i class="fa-solid fa-video text-amber-400"></i> Camera Hardware &amp; Status Requirements
+          </span>
+          <label class="flex items-center gap-2 p-1.5 rounded hover:bg-slate-800 cursor-pointer">
+            <input type="checkbox" id="targetRequireCameraCfg" class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+            <span>Only target vehicles with dashcam installed</span>
+          </label>
+          <label class="flex items-center gap-2 p-1.5 rounded hover:bg-slate-800 cursor-pointer">
+            <input type="checkbox" id="targetExcludeOfflineCfg" class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+            <span>Exclude powered-off / dormant cameras from targets</span>
+          </label>
+        </div>
+      </div>
+      <div class="p-3.5 bg-slate-750 border-t border-slate-700 flex justify-end items-center gap-2">
+        <button onclick="closeTargetConfigModal()" class="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 font-medium text-xs transition">
+          Cancel
+        </button>
+        <button onclick="saveTargetRules()" class="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-amber-500/20 transition">
+          <i class="fa-solid fa-floppy-disk"></i> Save Target Rules
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let vehiclesData = { targets: [], others: [], total: 0 };
+    let currentTargetConfig = {
+      associations: ["HEART", "ALL AMERICAN", "BMW", "HOUSTON TOWING", "Unassigned"],
+      motions: ["transit", "idle"],
+      require_camera: true,
+      exclude_offline: true
+    };
+    let autoRefreshCountdownInterval = null;
+    let autoRefreshTotalSeconds = 0;
+    let autoRefreshSecondsRemaining = 0;
+    let isAutoRefreshPaused = false;
+
+    function updateTargetCountBadge(targetsList) {
+      const targets = targetsList || vehiclesData.targets || [];
+      const offlineCount = targets.filter(t => t.is_offline).length;
+      const activeCount = targets.length - offlineCount;
+      const badge = document.getElementById('targetCountBadge');
+      if (!badge) return;
+      if (offlineCount > 0) {
+        badge.innerHTML = `${targets.length} targets &bull; <span class="text-emerald-400 font-bold">${activeCount} active</span> &bull; <span class="text-rose-400 font-bold" title="Skipped in batch refresh to save time">${offlineCount} powered off</span>`;
+      } else {
+        badge.textContent = `${targets.length} target vehicles`;
+      }
+    }
+
+    async function loadTargetConfig() {
+      try {
+        const res = await fetch('/api/targets/config');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.config) {
+            currentTargetConfig = data.config;
+          }
+        }
+      } catch (e) {
+        console.warn("Could not fetch target config:", e);
+      }
+    }
+
+    function openTargetConfigModal() {
+      const assocs = currentTargetConfig.associations || [];
+      document.querySelectorAll('input[name="targetAssocCfg"]').forEach(cb => {
+        cb.checked = assocs.some(a => a.toUpperCase() === cb.value.toUpperCase());
+      });
+
+      const motions = currentTargetConfig.motions || [];
+      document.querySelectorAll('input[name="targetMotionCfg"]').forEach(cb => {
+        cb.checked = motions.includes(cb.value);
+      });
+
+      const reqCam = document.getElementById('targetRequireCameraCfg');
+      if (reqCam) reqCam.checked = !!currentTargetConfig.require_camera;
+
+      const exclOff = document.getElementById('targetExcludeOfflineCfg');
+      if (exclOff) exclOff.checked = !!currentTargetConfig.exclude_offline;
+
+      document.getElementById('targetConfigModal').classList.remove('hidden');
+    }
+
+    function closeTargetConfigModal() {
+      document.getElementById('targetConfigModal').classList.add('hidden');
+    }
+
+    function toggleAllTargetCheckboxes(name, checkAll) {
+      document.querySelectorAll(`input[name="${name}"]`).forEach(cb => {
+        cb.checked = checkAll;
+      });
+    }
+
+    function evaluateIsTargetLocal(v, cfg) {
+      if (!cfg) cfg = currentTargetConfig;
+      const assocs = (cfg.associations || []).map(a => a.toUpperCase());
+      const vGrp = (v.group || 'Unassigned').toUpperCase();
+      if (assocs.length && !assocs.includes(vGrp)) return false;
+
+      const motions = cfg.motions || ['transit', 'idle'];
+      const s = (v.status || '').toLowerCase();
+      const cat = (v.motion_category || '').toLowerCase();
+      const isTransit = cat === 'transit' || s.includes('transit') || s.includes('moving') || s.includes('driving');
+      const isIdle = cat === 'idle' || s.includes('idle') || s.includes('idling');
+      const isStationary = !isTransit && !isIdle;
+
+      let motionMatch = false;
+      if (motions.includes('transit') && isTransit) motionMatch = true;
+      if (motions.includes('idle') && isIdle) motionMatch = true;
+      if (motions.includes('stationary') && isStationary) motionMatch = true;
+      if (!motionMatch) return false;
+
+      if (cfg.require_camera && !v.has_camera) return false;
+      if (cfg.exclude_offline && (v.is_offline || (v.camera_status || '').toLowerCase().includes('powered off'))) return false;
+
+      return true;
+    }
+
+    async function saveTargetRules() {
+      const selectedAssocs = Array.from(document.querySelectorAll('input[name="targetAssocCfg"]:checked')).map(cb => cb.value);
+      const selectedMotions = Array.from(document.querySelectorAll('input[name="targetMotionCfg"]:checked')).map(cb => cb.value);
+      const requireCamera = document.getElementById('targetRequireCameraCfg')?.checked ?? true;
+      const excludeOffline = document.getElementById('targetExcludeOfflineCfg')?.checked ?? true;
+
+      if (selectedAssocs.length === 0) {
+        alert("Please select at least one association for targets.");
+        return;
+      }
+      if (selectedMotions.length === 0) {
+        alert("Please select at least one motion state for targets.");
+        return;
+      }
+
+      const newCfg = {
+        associations: selectedAssocs,
+        motions: selectedMotions,
+        require_camera: requireCamera,
+        exclude_offline: excludeOffline
+      };
+
+      document.getElementById('statusMessage').textContent = "Saving target configuration...";
+      try {
+        const res = await fetch('/api/targets/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newCfg)
+        });
+        const data = await res.json();
+        currentTargetConfig = data.config || newCfg;
+
+        // Recalculate local vehicles is_target
+        const allV = vehiclesData.vehicles || [...(vehiclesData.targets || []), ...(vehiclesData.others || [])];
+        allV.forEach(v => {
+          v.is_target = evaluateIsTargetLocal(v, currentTargetConfig);
+        });
+        vehiclesData.targets = allV.filter(v => v.is_target);
+        vehiclesData.others = allV.filter(v => !v.is_target);
+
+        updateTargetCountBadge(vehiclesData.targets);
+        updateFilterCounts();
+        renderVehicles();
+        saveUserPreferences();
+        closeTargetConfigModal();
+        document.getElementById('statusMessage').textContent = `Target rules saved: ${vehiclesData.targets.length} target vehicles identified.`;
+      } catch (err) {
+        alert("Failed to save target rules: " + err.message);
+      }
+    }
+
+    function saveUserPreferences() {
+      try {
+        const prefs = {
+          assocs: getCheckedValues('assocFilter'),
+          motions: getCheckedValues('motionFilter'),
+          cameras: getCheckedValues('cameraFilter'),
+          targetsOnly: document.getElementById('targetsOnlyBtn')?.getAttribute('data-active') === 'true',
+          sort: document.getElementById('sortSelect')?.value || 'updated_desc',
+          autoRefreshMins: parseInt(document.getElementById('autoRefreshSelect')?.value || '0', 10),
+          workers: document.getElementById('concurrencySelect')?.value || '4',
+          targetConfig: currentTargetConfig
+        };
+        localStorage.setItem('motive_safety_console_prefs_v2', JSON.stringify(prefs));
+      } catch (e) {
+        console.debug("Could not save user preferences:", e);
+      }
+    }
+
+    function loadUserPreferences() {
+      try {
+        const raw = localStorage.getItem('motive_safety_console_prefs_v2');
+        if (!raw) return;
+        const prefs = JSON.parse(raw);
+
+        if (Array.isArray(prefs.assocs) && prefs.assocs.length > 0) {
+          document.querySelectorAll('input[name="assocFilter"]').forEach(cb => {
+            cb.checked = prefs.assocs.includes(cb.value);
+          });
+        }
+
+        if (Array.isArray(prefs.motions) && prefs.motions.length > 0) {
+          document.querySelectorAll('input[name="motionFilter"]').forEach(cb => {
+            cb.checked = prefs.motions.includes(cb.value);
+          });
+        }
+
+        if (Array.isArray(prefs.cameras) && prefs.cameras.length > 0) {
+          document.querySelectorAll('input[name="cameraFilter"]').forEach(cb => {
+            cb.checked = prefs.cameras.includes(cb.value);
+          });
+        }
+
+        if (typeof prefs.targetsOnly === 'boolean') {
+          setTargetsOnly(prefs.targetsOnly);
+        }
+
+        if (prefs.sort) {
+          const sortEl = document.getElementById('sortSelect');
+          if (sortEl) sortEl.value = prefs.sort;
+        }
+
+        if (prefs.workers) {
+          const concEl = document.getElementById('concurrencySelect');
+          if (concEl) concEl.value = prefs.workers;
+        }
+
+        if (typeof prefs.autoRefreshMins === 'number' && prefs.autoRefreshMins > 0) {
+          const autoRefEl = document.getElementById('autoRefreshSelect');
+          if (autoRefEl) {
+            autoRefEl.value = String(prefs.autoRefreshMins);
+            setupAutoRefresh(prefs.autoRefreshMins, false);
+          }
+        }
+
+        // targetConfig is stored on server via /api/targets/config; fallback if uninitialized
+        if (prefs.targetConfig && (!currentTargetConfig || !currentTargetConfig.associations || currentTargetConfig.associations.length === 0)) {
+          currentTargetConfig = prefs.targetConfig;
+        }
+        if (!currentTargetConfig || !currentTargetConfig.associations || currentTargetConfig.associations.length < 3) {
+          currentTargetConfig = {
+            associations: ["HEART", "ALL AMERICAN", "BMW", "HOUSTON TOWING", "Unassigned"],
+            motions: ["transit", "idle"],
+            require_camera: true,
+            exclude_offline: true
+          };
+        }
+      } catch (e) {
+        console.debug("Could not load user preferences:", e);
+      }
+    }
+
+    function onSortChange() {
+      saveUserPreferences();
+      renderVehicles();
+    }
+
+    function onAutoRefreshChange() {
+      const mins = parseInt(document.getElementById('autoRefreshSelect').value, 10);
+      setupAutoRefresh(mins, true);
+    }
+
+    function setupAutoRefresh(mins, save = true) {
+      if (autoRefreshCountdownInterval) {
+        clearInterval(autoRefreshCountdownInterval);
+        autoRefreshCountdownInterval = null;
+      }
+
+      const badge = document.getElementById('countdownBadge');
+      const pauseIcon = document.getElementById('countdownPauseIcon');
+
+      if (mins > 0) {
+        autoRefreshTotalSeconds = mins * 60;
+        autoRefreshSecondsRemaining = autoRefreshTotalSeconds;
+        isAutoRefreshPaused = false;
+        if (badge) {
+          badge.classList.remove('hidden');
+          badge.classList.add('flex');
+        }
+        if (pauseIcon) {
+          pauseIcon.className = "fa-solid fa-pause text-[10px]";
+        }
+        updateCountdownDisplay();
+
+        autoRefreshCountdownInterval = setInterval(() => {
+          if (isAutoRefreshPaused) return;
+          autoRefreshSecondsRemaining--;
+          if (autoRefreshSecondsRemaining <= 0) {
+            autoRefreshSecondsRemaining = autoRefreshTotalSeconds;
+            updateCountdownDisplay();
+            refreshAllTargetCameras(false);
+          } else {
+            updateCountdownDisplay();
+          }
+        }, 1000);
+
+        document.getElementById('statusMessage').textContent = `Auto-refresh set to every ${mins}m with live countdown.`;
+      } else {
+        if (badge) {
+          badge.classList.add('hidden');
+          badge.classList.remove('flex');
+        }
+        document.getElementById('statusMessage').textContent = "Auto-refresh disabled.";
+      }
+
+      if (save) saveUserPreferences();
+    }
+
+    function toggleAutoRefreshPause() {
+      isAutoRefreshPaused = !isAutoRefreshPaused;
+      const pauseIcon = document.getElementById('countdownPauseIcon');
+      const pauseBtn = document.getElementById('countdownPauseBtn');
+      if (isAutoRefreshPaused) {
+        if (pauseIcon) pauseIcon.className = "fa-solid fa-play text-[10px]";
+        if (pauseBtn) pauseBtn.title = "Resume countdown";
+        document.getElementById('statusMessage').textContent = "Auto-refresh timer paused.";
+      } else {
+        if (pauseIcon) pauseIcon.className = "fa-solid fa-pause text-[10px]";
+        if (pauseBtn) pauseBtn.title = "Pause countdown";
+        document.getElementById('statusMessage').textContent = "Auto-refresh timer resumed.";
+      }
+    }
+
+    function updateCountdownDisplay() {
+      const display = document.getElementById('countdownDisplay');
+      if (!display) return;
+      const m = Math.floor(autoRefreshSecondsRemaining / 60);
+      const s = autoRefreshSecondsRemaining % 60;
+      display.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+
+    async function checkStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        
+        const pill = document.getElementById('connectionPill');
+        const text = document.getElementById('connectionText');
+
+        if (data.logged_in) {
+          pill.className = "flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-semibold";
+          pill.children[0].className = "w-2.5 h-2.5 rounded-full bg-emerald-400";
+          text.textContent = data.is_cdp ? "Chrome Connected (Port 9222)" : "Motive Connected";
+        } else {
+          pill.className = "flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-semibold";
+          pill.children[0].className = "w-2.5 h-2.5 rounded-full bg-red-400 animate-pulse";
+          text.textContent = data.is_cdp ? "Chrome Active - Log in to Motive" : "Login Required";
+        }
+
+        if (data.current_status) {
+          document.getElementById('statusMessage').textContent = data.current_status;
+        }
+
+        if (data.target_count !== undefined) {
+          if (data.offline_count > 0) {
+            document.getElementById('targetCountBadge').innerHTML = `${data.target_count} targets &bull; <span class="text-emerald-400 font-bold">${data.active_count} active</span> &bull; <span class="text-rose-400 font-bold" title="Skipped in batch refresh to save time">${data.offline_count} powered off</span>`;
+          } else {
+            document.getElementById('targetCountBadge').textContent = `${data.target_count || 0} target vehicles`;
+          }
+        }
+      } catch (err) {
+        console.error("Status check failed", err);
+      }
+    }
+
+    async function openMotiveLogin() {
+      await fetch('/api/login', { method: 'POST' });
+      alert("A browser window has opened for Motive. Please sign in or complete 2FA, then return here.");
+    }
+
+    function getVehicleTimestamp(v) {
+      if (!v) return 0;
+      const raw = v.last_refreshed_ts || v.last_refreshed_iso;
+      if (!raw) return 0;
+      let ts = parseInt(raw, 10);
+      if (isNaN(ts) || ts <= 1000000) {
+        ts = new Date(raw).getTime();
+      }
+      return isNaN(ts) ? 0 : ts;
+    }
+
+    function getAllVehiclesList() {
+      const targets = vehiclesData.targets || [];
+      const others = vehiclesData.others || [];
+      const seen = new Set();
+      const combined = [];
+      [...targets, ...others].forEach(v => {
+        if (v && v.id && !seen.has(v.id)) {
+          seen.add(v.id);
+          combined.push(v);
+        }
+      });
+      return combined;
+    }
+
+    // Multi-Dropdown Toggle & Outside-Click Management
+    function toggleMultiDropdown(dropdownId, event) {
+      if (event) event.stopPropagation();
+      const allDropdowns = ['assocDropdown', 'motionDropdown', 'cameraDropdown'];
+      allDropdowns.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (id === dropdownId) {
+          el.classList.toggle('hidden');
+        } else {
+          el.classList.add('hidden');
+        }
+      });
+    }
+
+    // Close all open dropdowns when clicking outside or pressing Escape
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.multi-dropdown')) {
+        ['assocDropdown', 'motionDropdown', 'cameraDropdown'].forEach(id => {
+          document.getElementById(id)?.classList.add('hidden');
+        });
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        ['assocDropdown', 'motionDropdown', 'cameraDropdown'].forEach(id => {
+          document.getElementById(id)?.classList.add('hidden');
+        });
+      }
+    });
+
+    function toggleAllCheckboxes(name, checkAll) {
+      document.querySelectorAll(`input[name="${name}"]`).forEach(cb => {
+        cb.checked = checkAll;
+      });
+      onFilterCriteriaChanged();
+    }
+
+    function toggleTargetsOnly() {
+      const btn = document.getElementById('targetsOnlyBtn');
+      if (!btn) return;
+      const current = btn.getAttribute('data-active') === 'true';
+      const next = !current;
+      setTargetsOnly(next);
+      saveUserPreferences();
+      renderVehicles();
+    }
+
+    function setTargetsOnly(active) {
+      const btn = document.getElementById('targetsOnlyBtn');
+      if (!btn) return;
+      btn.setAttribute('data-active', String(active));
+      if (active) {
+        btn.className = "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-amber-500/60 bg-amber-500/20 text-amber-300 shadow-sm transition text-xs font-bold";
+        btn.children[0].className = "fa-solid fa-crosshairs text-amber-400";
+      } else {
+        btn.className = "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-700 bg-slate-900/90 text-slate-300 hover:text-white transition text-xs font-semibold";
+        btn.children[0].className = "fa-solid fa-crosshairs text-slate-400";
+      }
+    }
+
+    function getCheckedValues(name) {
+      return Array.from(document.querySelectorAll(`input[name="${name}"]:checked`)).map(cb => cb.value);
+    }
+
+    function updateDropdownLabels() {
+      // 1. Association Label
+      const allAssocCbs = Array.from(document.querySelectorAll('input[name="assocFilter"]'));
+      const checkedAssocs = allAssocCbs.filter(cb => cb.checked).map(cb => cb.value);
+      const assocLabelEl = document.getElementById('assocBtnLabel');
+      if (assocLabelEl) {
+        if (checkedAssocs.length === allAssocCbs.length) {
+          assocLabelEl.textContent = "Assoc: All";
+        } else if (checkedAssocs.length === 0) {
+          assocLabelEl.textContent = "Assoc: None (0)";
+        } else if (checkedAssocs.length === 1) {
+          assocLabelEl.textContent = `Assoc: ${checkedAssocs[0]}`;
+        } else {
+          assocLabelEl.textContent = `Assoc: ${checkedAssocs[0]} +${checkedAssocs.length - 1}`;
+        }
+      }
+
+      // 2. Motion Label
+      const allMotionCbs = Array.from(document.querySelectorAll('input[name="motionFilter"]'));
+      const checkedMotions = allMotionCbs.filter(cb => cb.checked).map(cb => cb.value);
+      const motionLabelEl = document.getElementById('motionBtnLabel');
+      if (motionLabelEl) {
+        if (checkedMotions.length === allMotionCbs.length) {
+          motionLabelEl.textContent = "Motion: All";
+        } else if (checkedMotions.length === 0) {
+          motionLabelEl.textContent = "Motion: None (0)";
+        } else {
+          const names = { transit: "Transit", idle: "Idling", stationary: "Stationary" };
+          motionLabelEl.textContent = `Motion: ${checkedMotions.map(m => names[m] || m).join(', ')}`;
+        }
+      }
+
+      // 3. Camera Label
+      const allCameraCbs = Array.from(document.querySelectorAll('input[name="cameraFilter"]'));
+      const checkedCameras = allCameraCbs.filter(cb => cb.checked).map(cb => cb.value);
+      const cameraLabelEl = document.getElementById('cameraBtnLabel');
+      if (cameraLabelEl) {
+        if (checkedCameras.length === allCameraCbs.length) {
+          cameraLabelEl.textContent = "Camera: All";
+        } else if (checkedCameras.length === 0) {
+          cameraLabelEl.textContent = "Camera: None (0)";
+        } else {
+          const cNames = { active: "Active", powered_off: "Offline", has_images: "Frames" };
+          cameraLabelEl.textContent = `Camera: ${checkedCameras.map(c => cNames[c] || c).join(', ')}`;
+        }
+      }
+    }
+
+    function onFilterCriteriaChanged() {
+      updateDropdownLabels();
+      saveUserPreferences();
+      renderVehicles();
+    }
+
+    function getFilteredAndSortedVehicles() {
+      const allVehicles = vehiclesData.vehicles || [...(vehiclesData.targets || []), ...(vehiclesData.others || [])];
+
+      const selectedAssocs = getCheckedValues('assocFilter');
+      const targetsOnly = document.getElementById('targetsOnlyBtn')?.getAttribute('data-active') === 'true';
+      const selectedMotions = getCheckedValues('motionFilter');
+      const selectedCameras = getCheckedValues('cameraFilter');
+      const query = (document.getElementById('searchInput')?.value || '').trim().toLowerCase();
+      const sortVal = document.getElementById('sortSelect')?.value || 'updated_desc';
+
+      const filtered = allVehicles.filter(v => {
+        // 1. Association match
+        const vGroup = v.group || 'Unassigned';
+        if (selectedAssocs.length === 0) return false;
+        if (!selectedAssocs.includes(vGroup)) return false;
+
+        // 2. Targets Only match
+        if (targetsOnly && !v.is_target) return false;
+
+        // 3. Motion Status match (Multi-Select)
+        if (selectedMotions.length === 0) return false;
+        if (selectedMotions.length < 3) {
+          const s = (v.status || '').toLowerCase();
+          const cat = (v.motion_category || '').toLowerCase();
+          const isTransit = cat === 'transit' || s.includes('transit') || s.includes('moving') || s.includes('driving');
+          const isIdle = cat === 'idle' || s.includes('idle') || s.includes('idling');
+          const isStationary = !isTransit && !isIdle;
+
+          let motionMatch = false;
+          if (selectedMotions.includes('transit') && isTransit) motionMatch = true;
+          if (selectedMotions.includes('idle') && isIdle) motionMatch = true;
+          if (selectedMotions.includes('stationary') && isStationary) motionMatch = true;
+          if (!motionMatch) return false;
+        }
+
+        // 4. Camera State match (Multi-Select)
+        if (selectedCameras.length === 0) return false;
+        if (selectedCameras.length < 3) {
+          const isOffline = !!v.is_offline;
+          const cStat = (v.camera_status || '').toLowerCase();
+          const hasImages = !!(v.driver_camera_img || v.road_camera_img);
+          const isPoweredOff = isOffline || cStat.includes('powered off') || cStat.includes('timed out') || cStat.includes('offline');
+          const isActive = !isPoweredOff;
+
+          let camMatch = false;
+          if (selectedCameras.includes('active') && isActive) camMatch = true;
+          if (selectedCameras.includes('powered_off') && isPoweredOff) camMatch = true;
+          if (selectedCameras.includes('has_images') && hasImages) camMatch = true;
+          if (!camMatch) return false;
+        }
+
+        // 5. Search query match
+        if (query) {
+          const name = (v.name || '').toLowerCase();
+          const driver = (v.driver || '').toLowerCase();
+          const group = (v.group || '').toLowerCase();
+          const status = (v.status || '').toLowerCase();
+          const camStatus = (v.camera_status || '').toLowerCase();
+          const matches = name.includes(query) || driver.includes(query) || group.includes(query) || status.includes(query) || camStatus.includes(query);
+          if (!matches) return false;
+        }
+
+        return true;
+      });
+
+      // Sorting
+      const sorted = [...filtered].sort((a, b) => {
+        if (sortVal === 'updated_desc') {
+          const tsA = getVehicleTimestamp(a);
+          const tsB = getVehicleTimestamp(b);
+          if (tsB !== tsA) return tsB - tsA;
+          return (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' });
+        } else if (sortVal === 'updated_asc') {
+          const tsA = getVehicleTimestamp(a);
+          const tsB = getVehicleTimestamp(b);
+          if (tsA === 0 && tsB > 0) return -1;
+          if (tsB === 0 && tsA > 0) return 1;
+          if (tsA !== tsB) return tsA - tsB;
+          return (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' });
+        } else if (sortVal === 'name_asc') {
+          return (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' });
+        } else if (sortVal === 'name_desc') {
+          return (b.name || '').localeCompare(a.name || '', undefined, { numeric: true, sensitivity: 'base' });
+        } else if (sortVal === 'driver_asc') {
+          const dA = (a.driver || '').trim();
+          const dB = (b.driver || '').trim();
+          if (!dA && dB) return 1;
+          if (dA && !dB) return -1;
+          return dA.localeCompare(dB, undefined, { numeric: true, sensitivity: 'base' });
+        } else if (sortVal === 'status_priority') {
+          function getStatusRank(v) {
+            const s = (v.status || '').toLowerCase();
+            const cat = (v.motion_category || '').toLowerCase();
+            if (cat === 'transit' || s.includes('transit') || s.includes('moving')) return 1;
+            if (cat === 'idle' || s.includes('idle')) return 2;
+            return 3;
+          }
+          const rA = getStatusRank(a);
+          const rB = getStatusRank(b);
+          if (rA !== rB) return rA - rB;
+          return (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' });
+        } else if (sortVal === 'camera_priority') {
+          function getCamRank(v) {
+            if (!v.is_offline && (v.camera_status || '').toLowerCase().includes('live')) return 1;
+            if (v.driver_camera_img || v.road_camera_img) return 2;
+            if (v.is_offline) return 4;
+            return 3;
+          }
+          const cA = getCamRank(a);
+          const cB = getCamRank(b);
+          if (cA !== cB) return cA - cB;
+          return (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' });
+        }
+        return 0;
+      });
+
+      return { sorted, totalInFleet: allVehicles.length };
+    }
+
+    function updateFilterCounts() {
+      const allVehicles = vehiclesData.vehicles || [...(vehiclesData.targets || []), ...(vehiclesData.others || [])];
+
+      let countTransit = 0;
+      let countIdle = 0;
+      let countStationary = 0;
+      let countActive = 0;
+      let countOffline = 0;
+      let countWithImages = 0;
+
+      const assocCounts = {
+        'HEART': 0,
+        'ALL AMERICAN': 0,
+        'BMW': 0,
+        'HOUSTON TOWING': 0,
+        'Unassigned': 0
+      };
+
+      allVehicles.forEach(v => {
+        const grp = v.group || 'Unassigned';
+        if (assocCounts[grp] !== undefined) {
+          assocCounts[grp]++;
+        } else {
+          assocCounts['Unassigned']++;
+        }
+
+        const s = (v.status || '').toLowerCase();
+        const cat = (v.motion_category || '').toLowerCase();
+        const isTransit = cat === 'transit' || s.includes('transit') || s.includes('moving') || s.includes('driving');
+        const isIdle = cat === 'idle' || s.includes('idle') || s.includes('idling');
+        const isStationary = !isTransit && !isIdle;
+
+        if (isTransit) countTransit++;
+        if (isIdle) countIdle++;
+        if (isStationary) countStationary++;
+
+        const isOffline = !!v.is_offline;
+        const cStat = (v.camera_status || '').toLowerCase();
+        const hasImages = !!(v.driver_camera_img || v.road_camera_img);
+        const isPoweredOff = isOffline || cStat.includes('powered off') || cStat.includes('timed out') || cStat.includes('offline');
+
+        if (!isPoweredOff) countActive++;
+        if (isPoweredOff) countOffline++;
+        if (hasImages) countWithImages++;
+      });
+
+      // Update Association dropdown item counts
+      const elAHeart = document.getElementById('countAssoc-HEART');
+      const elAAA = document.getElementById('countAssoc-ALL_AMERICAN');
+      const elABmw = document.getElementById('countAssoc-BMW');
+      const elAHT = document.getElementById('countAssoc-HOUSTON_TOWING');
+      const elAUn = document.getElementById('countAssoc-Unassigned');
+
+      if (elAHeart) elAHeart.textContent = `(${assocCounts['HEART']})`;
+      if (elAAA) elAAA.textContent = `(${assocCounts['ALL AMERICAN']})`;
+      if (elABmw) elABmw.textContent = `(${assocCounts['BMW']})`;
+      if (elAHT) elAHT.textContent = `(${assocCounts['HOUSTON TOWING']})`;
+      if (elAUn) elAUn.textContent = `(${assocCounts['Unassigned']})`;
+
+      // Update Motion dropdown item counts
+      const elMTr = document.getElementById('countMotionTransit');
+      const elMId = document.getElementById('countMotionIdle');
+      const elMSt = document.getElementById('countMotionStationary');
+      if (elMTr) elMTr.textContent = countTransit;
+      if (elMId) elMId.textContent = countIdle;
+      if (elMSt) elMSt.textContent = countStationary;
+
+      // Update Camera dropdown item counts
+      const elCAct = document.getElementById('countCamActive');
+      const elCOff = document.getElementById('countCamOffline');
+      const elCImg = document.getElementById('countCamImages');
+      if (elCAct) elCAct.textContent = countActive;
+      if (elCOff) elCOff.textContent = countOffline;
+      if (elCImg) elCImg.textContent = countWithImages;
+    }
+
+    function onSearchInput() {
+      const input = document.getElementById('searchInput');
+      const clearBtn = document.getElementById('clearSearchBtn');
+      if (input && clearBtn) {
+        if (input.value.length > 0) {
+          clearBtn.classList.remove('hidden');
+        } else {
+          clearBtn.classList.add('hidden');
+        }
+      }
+      renderVehicles();
+    }
+
+    function clearSearch() {
+      const input = document.getElementById('searchInput');
+      const clearBtn = document.getElementById('clearSearchBtn');
+      if (input) input.value = '';
+      if (clearBtn) clearBtn.classList.add('hidden');
+      renderVehicles();
+    }
+
+    function resetAllFilters() {
+      const searchInput = document.getElementById('searchInput');
+      const clearBtn = document.getElementById('clearSearchBtn');
+      const sortSelect = document.getElementById('sortSelect');
+
+      if (searchInput) searchInput.value = '';
+      if (clearBtn) clearBtn.classList.add('hidden');
+
+      toggleAllCheckboxes('assocFilter', true);
+      setTargetsOnly(false);
+      toggleAllCheckboxes('motionFilter', true);
+      toggleAllCheckboxes('cameraFilter', true);
+
+      if (sortSelect) sortSelect.value = 'updated_desc';
+
+      saveUserPreferences();
+      onFilterCriteriaChanged();
+    }
+
+    async function syncVehicles(force = false) {
+      document.getElementById('statusMessage').textContent = "Fetching vehicle list from Motive across all associations...";
+      try {
+        const res = await fetch(`/api/vehicles?refresh=${force}`);
+        vehiclesData = await res.json();
+
+        // Always pull live motion status so freshly synced fleet has up-to-date telematics
+        await pullMotionStatus();
+
+        const allV = vehiclesData.vehicles || [...(vehiclesData.targets || []), ...(vehiclesData.others || [])];
+        allV.forEach(v => {
+          v.is_target = evaluateIsTargetLocal(v, currentTargetConfig);
+        });
+        vehiclesData.targets = allV.filter(v => v.is_target);
+        vehiclesData.others = allV.filter(v => !v.is_target);
+
+        updateTargetCountBadge(vehiclesData.targets);
+        updateFilterCounts();
+        updateDropdownLabels();
+        renderVehicles();
+        document.getElementById('statusMessage').textContent = `Sync complete. ${allV.length} vehicles mapped across associations (${vehiclesData.targets.length} targets).`;
+      } catch (err) {
+        document.getElementById('statusMessage').textContent = "Error syncing vehicles: " + err.message;
+      }
+    }
+
+    function renderVehicles() {
+      const grid = document.getElementById('vehiclesGrid');
+      const showingCountEl = document.getElementById('showingCount');
+      const totalScopeCountEl = document.getElementById('totalScopeCount');
+
+      const { sorted, totalInFleet } = getFilteredAndSortedVehicles();
+
+      if (showingCountEl) showingCountEl.textContent = sorted.length;
+      if (totalScopeCountEl) totalScopeCountEl.textContent = totalInFleet;
+
+      if (sorted.length === 0) {
+        grid.innerHTML = `
+          <div class="col-span-full py-16 text-center text-slate-500 bg-slate-800/30 rounded-2xl border border-slate-800">
+            <i class="fa-solid fa-filter-circle-xmark text-4xl mb-3 text-slate-600"></i>
+            <p class="text-sm font-semibold text-slate-300">No vehicles match current multi-filter criteria.</p>
+            <p class="text-xs text-slate-500 mt-1">Check that at least one association, motion status, and camera state are selected.</p>
+            <button onclick="resetAllFilters()" class="mt-4 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition inline-flex items-center gap-1.5 shadow-md">
+              <i class="fa-solid fa-rotate-left"></i> Reset All Filters
+            </button>
+          </div>
+        `;
+        return;
+      }
+
+      grid.innerHTML = sorted.map(v => createVehicleCard(v)).join('');
+    }
+
+    function formatTimeDelta(raw) {
+      if (!raw) return "Waiting refresh";
+      let ts = parseInt(raw, 10);
+      if (isNaN(ts) || ts <= 1000000) {
+        ts = new Date(raw).getTime();
+      }
+      if (isNaN(ts) || ts <= 0) return "Waiting refresh";
+
+      const now = Date.now();
+      const diffSec = Math.max(0, Math.floor((now - ts) / 1000));
+      const m = Math.floor(diffSec / 60);
+
+      if (m < 1) {
+        return "< 1m ago";
+      } else if (m < 60) {
+        return `${m}m ago`;
+      } else if (m < 1440) {
+        const h = Math.floor(m / 60);
+        const remM = m % 60;
+        return `${h}h ${remM}m ago`;
+      } else {
+        const d = Math.floor(m / 1440);
+        const remH = Math.floor((m % 1440) / 60);
+        return `${d}d ${remH}h ago`;
+      }
+    }
+
+    function getTimeDeltaBadgeClass(raw) {
+      if (!raw) return "bg-slate-700 text-slate-400 border-slate-600";
+      let ts = parseInt(raw, 10);
+      if (isNaN(ts) || ts <= 1000000) {
+        ts = new Date(raw).getTime();
+      }
+      if (isNaN(ts) || ts <= 0) return "bg-slate-700 text-slate-400 border-slate-600";
+
+      const now = Date.now();
+      const diffMin = Math.max(0, Math.floor((now - ts) / 60000));
+      if (diffMin <= 2) {
+        return "bg-emerald-500/20 text-emerald-400 border-emerald-500/30";
+      } else if (diffMin < 15) {
+        return "bg-amber-500/20 text-amber-400 border-amber-500/30";
+      } else {
+        return "bg-slate-700 text-slate-400 border-slate-600";
+      }
+    }
+
+    function getGroupBadgeHtml(group) {
+      const g = (group || 'Unassigned').toUpperCase();
+      if (g === 'HEART') {
+        return `<span class="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold text-[10px]">HEART</span>`;
+      } else if (g === 'ALL AMERICAN') {
+        return `<span class="px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 font-bold text-[10px]">ALL AMERICAN</span>`;
+      } else if (g === 'BMW') {
+        return `<span class="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30 font-bold text-[10px]">BMW</span>`;
+      } else if (g === 'HOUSTON TOWING') {
+        return `<span class="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold text-[10px]">HOUSTON TOWING</span>`;
+      } else {
+        return `<span class="px-2 py-0.5 rounded bg-slate-700 text-slate-300 border border-slate-600 font-medium text-[10px]">${group || 'Unassigned'}</span>`;
+      }
+    }
+
+    function getDriverMotionIndicatorHtml(v) {
+      const s = (v.status || '').toLowerCase();
+      const cat = (v.motion_category || '').toLowerCase();
+      const isTransit = cat === 'transit' || s.includes('transit') || s.includes('moving') || s.includes('driving');
+      const isIdle = cat === 'idle' || s.includes('idle') || s.includes('idling');
+      const speed = v.speed_mph || 0;
+
+      if (isTransit) {
+        const titleText = `In Transit${speed > 0 ? ' (' + speed + ' mph)' : ''}`;
+        return `<span class="inline-block w-2.5 h-2.5 rounded-full bg-green-500 shadow-sm shrink-0" title="${titleText}"></span>`;
+      } else if (isIdle) {
+        return `<span class="inline-block w-2.5 h-2.5 rounded-full bg-yellow-400 shadow-sm shrink-0" title="Idling"></span>`;
+      } else {
+        return `<span class="inline-block w-2.5 h-2.5 rounded-full bg-gray-400 shadow-sm shrink-0" title="Stationary / Parked"></span>`;
+      }
+    }
+
+    function createVehicleCard(v) {
+      const groupBadge = getGroupBadgeHtml(v.group);
+      const driverMotionIndicator = getDriverMotionIndicatorHtml(v);
+
+      const statusLower = (v.status || '').toLowerCase();
+      const cat = (v.motion_category || '').toLowerCase();
+      let statusColor = "bg-slate-700 text-slate-300";
+      if (cat === 'transit' || statusLower.includes("transit") || statusLower.includes("moving")) {
+        statusColor = "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30";
+      } else if (cat === 'idle' || statusLower.includes("idle") || statusLower.includes("idling")) {
+        statusColor = "bg-amber-500/20 text-amber-400 border border-amber-500/30";
+      }
+
+      const driverImg = v.driver_camera_img || '';
+      const roadImg = v.road_camera_img || '';
+      const isOffline = !!v.is_offline;
+      const offlineReason = v.offline_reason || 'Powered off / Unresponsive';
+      let cameraStatus = v.camera_status || 'Waiting refresh';
+      if (isOffline) {
+        cameraStatus = 'Powered Off';
+      }
+      const camLower = cameraStatus.toLowerCase();
+      const isLive = !isOffline && camLower.includes('live');
+      const isTimeout = isOffline || camLower.includes('timed out') || camLower.includes('refused') || camLower.includes('offline');
+      const badgeClass = isLive ? 'badge-live' : (isOffline ? 'bg-zinc-800 text-rose-300 border border-zinc-700' : (isTimeout ? 'badge-timeout' : 'badge-stale'));
+      // Always redirect to the Motive vehicle live camera view instead of the summary tab
+      let motiveVehicleUrl = v.live_url;
+      if (!motiveVehicleUrl && v.numeric_id) {
+        motiveVehicleUrl = `https://app.gomotive.com/en-US/#/fleetview/map/vehicle/${v.numeric_id}-null-null/${v.numeric_id}/live`;
+      } else if (!motiveVehicleUrl && v.vehicle_url) {
+        const m = v.vehicle_url.match(/\/vehicles\/summary\/(\d+)/);
+        if (m) {
+          motiveVehicleUrl = `https://app.gomotive.com/en-US/#/fleetview/map/vehicle/${m[1]}-null-null/${m[1]}/live`;
+        } else {
+          motiveVehicleUrl = v.vehicle_url;
+        }
+      }
+      if (!motiveVehicleUrl) {
+        motiveVehicleUrl = 'https://app.gomotive.com/en-US/#/fleetview/list/vehicles';
+      }
+      const deltaText = formatTimeDelta(v.last_refreshed_ts);
+      const deltaBadgeClass = getTimeDeltaBadgeClass(v.last_refreshed_ts);
+
+      return `
+        <div id="card-${v.id}" data-offline="${isOffline}" class="bg-slate-800/80 border ${isOffline ? 'border-zinc-700/80 opacity-90 hover:opacity-100' : 'border-slate-700'} rounded-xl overflow-hidden shadow-lg hover:border-slate-600 transition flex flex-col">
+          <!-- Card Header -->
+          <div class="px-4 py-3 bg-slate-750 border-b border-slate-700/80 flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <div class="bg-slate-700 p-2 rounded-lg text-amber-400">
+                <i class="fa-solid fa-truck"></i>
+              </div>
+              <div>
+                <div class="flex items-center gap-2">
+                  <a href="${motiveVehicleUrl}" target="_blank" rel="noopener noreferrer" class="font-bold text-sm text-white hover:text-amber-400 transition tracking-wide flex items-center gap-1" title="Open ${v.name} in Motive Live Tab">
+                    <span>${v.name}</span>
+                  </a>
+                  ${groupBadge}
+                </div>
+                <p class="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5 driver-info-line">
+                  <i class="fa-solid fa-id-badge text-slate-500"></i>
+                  <span class="driver-name">${v.driver || 'No Driver Assigned'}</span>
+                  <span class="driver-motion-indicator inline-flex items-center">${driverMotionIndicator}</span>
+                  <span class="text-slate-600">&bull;</span>
+                  <span class="text-slate-400 font-medium">${v.group || 'Unassigned'}</span>
+                </p>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-2">
+              ${isOffline ? `
+                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-zinc-800/90 text-rose-300 border border-zinc-700 flex items-center gap-1 shadow-sm" title="${offlineReason} (Skipped in batch refresh)">
+                  <i class="fa-solid fa-power-off text-rose-400 text-[9px]"></i> Powered Off
+                </span>
+              ` : `
+                <span class="vehicle-motion-pill px-2 py-0.5 rounded text-[10px] font-semibold ${statusColor}">
+                  ${v.status || 'In service'}
+                </span>
+              `}
+              <span id="delta-${v.id}" data-timestamp="${v.last_refreshed_ts || ''}" title="Gomotive Camera: ${v.motive_camera_time || v.camera_status || 'Waiting refresh'}" class="time-delta-badge px-2 py-0.5 rounded text-[10px] font-bold border ${deltaBadgeClass}">
+                <i class="fa-regular fa-clock text-[9px] mr-0.5"></i>${deltaText}
+              </span>
+              <!-- Motive Vehicle Page Button -->
+              <a href="${motiveVehicleUrl}" target="_blank" rel="noopener noreferrer" title="Open ${v.name} in Motive Live Tab" class="px-2.5 py-1.5 bg-slate-700 hover:bg-amber-500 hover:text-slate-950 text-amber-400 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 border border-slate-600 hover:border-amber-400 shadow-sm">
+                <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+                <span class="text-[10px]">Motive</span>
+              </a>
+              <button onclick="refreshVehicleCamera('${v.id}', '${v.name}')" title="${isOffline ? 'Powered off (skipped in batch refresh). Click to manually retry.' : 'Refresh Camera'}" class="p-1.5 ${isOffline ? 'bg-zinc-800 hover:bg-slate-700 text-zinc-400 hover:text-white border border-zinc-700' : 'bg-slate-700 hover:bg-slate-600 text-slate-200'} rounded-lg text-xs transition">
+                <i class="fa-solid fa-arrows-rotate"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- Dual Camera Panel -->
+          <div class="p-3 grid grid-cols-1 md:grid-cols-2 gap-3 bg-slate-900/40">
+            <!-- Driver Camera -->
+            <div class="relative camera-box rounded-lg overflow-hidden border border-slate-700 group">
+              ${driverImg ? `
+                <img src="${driverImg}" alt="Driver View" class="driver-cam-img w-full h-full object-cover">
+              ` : `
+                <div class="w-full h-full flex flex-col items-center justify-center text-slate-500 p-4 text-center">
+                  <i class="fa-solid fa-user-circle text-2xl mb-1 text-slate-600"></i>
+                  <span class="text-[11px]">Driver Cam (Inward)</span>
+                  <button onclick="refreshVehicleCamera('${v.id}', '${v.name}')" class="mt-2 text-[10px] text-amber-400 hover:underline">Click to request</button>
+                </div>
+              `}
+              <div class="absolute top-2 left-2 flex items-center gap-1.5">
+                <span class="camera-status-badge px-1.5 py-0.5 rounded text-[9px] font-bold text-white uppercase ${badgeClass}">
+                  ${cameraStatus}
+                </span>
+                <span class="px-1.5 py-0.5 rounded bg-black/60 backdrop-blur text-[9px] text-emerald-300 font-medium">
+                  Driver View
+                </span>
+              </div>
+              ${driverImg ? `
+                <button onclick="openImageModal('${driverImg}', '${v.name} - Driver View')" class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1 bg-black/60 hover:bg-black/90 text-white rounded text-xs transition">
+                  <i class="fa-solid fa-magnifying-glass-plus"></i>
+                </button>
+              ` : ''}
+            </div>
+
+            <!-- Road Camera -->
+            <div class="relative camera-box rounded-lg overflow-hidden border border-slate-700 group">
+              ${roadImg ? `
+                <img src="${roadImg}" alt="Road View" class="road-cam-img w-full h-full object-cover">
+              ` : `
+                <div class="w-full h-full flex flex-col items-center justify-center text-slate-500 p-4 text-center">
+                  <i class="fa-solid fa-road text-2xl mb-1 text-slate-600"></i>
+                  <span class="text-[11px]">Road Cam (Outward)</span>
+                  <span class="text-[10px] text-slate-600 mt-1">Check road position</span>
+                </div>
+              `}
+              <div class="absolute top-2 left-2 flex items-center gap-1.5">
+                <span class="px-1.5 py-0.5 rounded bg-black/60 backdrop-blur text-[9px] text-blue-300 font-medium">
+                  Road View
+                </span>
+              </div>
+              ${roadImg ? `
+                <button onclick="openImageModal('${roadImg}', '${v.name} - Road View')" class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1 bg-black/60 hover:bg-black/90 text-white rounded text-xs transition">
+                  <i class="fa-solid fa-magnifying-glass-plus"></i>
+                </button>
+              ` : ''}
+            </div>
+          </div>
+
+          <!-- Quick Compliance Check & Action Bar -->
+          <div class="p-3 bg-slate-800 border-t border-slate-700/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div class="flex flex-wrap items-center gap-1.5">
+              <!-- Seatbelt Toggle -->
+              <button id="sb-btn-${v.id}" onclick="toggleStatus('sb', '${v.id}')" data-val="ok" class="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 text-[11px] font-medium border border-slate-600 flex items-center gap-1">
+                <i class="fa-solid fa-circle-check text-emerald-400"></i> Seatbelt OK
+              </button>
+
+              <!-- Phone Toggle -->
+              <button id="phone-btn-${v.id}" onclick="toggleStatus('phone', '${v.id}')" data-val="ok" class="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 text-[11px] font-medium border border-slate-600 flex items-center gap-1">
+                <i class="fa-solid fa-mobile-screen text-slate-400"></i> Phone Clear
+              </button>
+
+              <!-- In Cab Toggle -->
+              <button id="cab-btn-${v.id}" onclick="toggleStatus('cab', '${v.id}')" data-val="ok" class="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 text-[11px] font-medium border border-slate-600 flex items-center gap-1">
+                <i class="fa-solid fa-user-check text-blue-400"></i> In Cab
+              </button>
+
+              <!-- Road Toggle -->
+              <button id="road-btn-${v.id}" onclick="toggleStatus('road', '${v.id}')" data-val="ok" class="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 text-[11px] font-medium border border-slate-600 flex items-center gap-1">
+                <i class="fa-solid fa-road text-slate-400"></i> On Road
+              </button>
+            </div>
+
+            <button onclick="logComplianceCheck('${v.id}', '${v.name}', '${v.driver || 'Unassigned'}', '${driverImg}', '${roadImg}')" class="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[11px] flex items-center gap-1 transition">
+              <i class="fa-solid fa-floppy-disk"></i> Log Check
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    function toggleStatus(type, id) {
+      const btn = document.getElementById(`${type}-btn-${id}`);
+      const current = btn.getAttribute('data-val');
+
+      if (type === 'sb') {
+        if (current === 'ok') {
+          btn.setAttribute('data-val', 'violation');
+          btn.className = "px-2 py-1 rounded bg-red-600 text-white text-[11px] font-bold border border-red-500 flex items-center gap-1";
+          btn.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> NO SEATBELT`;
+        } else {
+          btn.setAttribute('data-val', 'ok');
+          btn.className = "px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 text-[11px] font-medium border border-slate-600 flex items-center gap-1";
+          btn.innerHTML = `<i class="fa-solid fa-circle-check text-emerald-400"></i> Seatbelt OK`;
+        }
+      } else if (type === 'phone') {
+        if (current === 'ok') {
+          btn.setAttribute('data-val', 'violation');
+          btn.className = "px-2 py-1 rounded bg-red-600 text-white text-[11px] font-bold border border-red-500 flex items-center gap-1";
+          btn.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> PHONE IN HAND`;
+        } else {
+          btn.setAttribute('data-val', 'ok');
+          btn.className = "px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 text-[11px] font-medium border border-slate-600 flex items-center gap-1";
+          btn.innerHTML = `<i class="fa-solid fa-mobile-screen text-slate-400"></i> Phone Clear`;
+        }
+      } else if (type === 'cab') {
+        if (current === 'ok') {
+          btn.setAttribute('data-val', 'absent');
+          btn.className = "px-2 py-1 rounded bg-yellow-600 text-white text-[11px] font-bold border border-yellow-500 flex items-center gap-1";
+          btn.innerHTML = `<i class="fa-solid fa-person-circle-xmark"></i> NOT IN CAB`;
+        } else {
+          btn.setAttribute('data-val', 'ok');
+          btn.className = "px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 text-[11px] font-medium border border-slate-600 flex items-center gap-1";
+          btn.innerHTML = `<i class="fa-solid fa-user-check text-blue-400"></i> In Cab`;
+        }
+      } else if (type === 'road') {
+        if (current === 'ok') {
+          btn.setAttribute('data-val', 'off');
+          btn.className = "px-2 py-1 rounded bg-slate-600 text-slate-300 text-[11px] font-medium border border-slate-500 flex items-center gap-1";
+          btn.innerHTML = `<i class="fa-solid fa-parking"></i> Off Road / Parked`;
+        } else {
+          btn.setAttribute('data-val', 'ok');
+          btn.className = "px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 text-[11px] font-medium border border-slate-600 flex items-center gap-1";
+          btn.innerHTML = `<i class="fa-solid fa-road text-slate-400"></i> On Road`;
+        }
+      }
+    }
+
+    async function logComplianceCheck(vehicleId, vehicleName, driverName, driverImg, roadImg) {
+      const sbVal = document.getElementById(`sb-btn-${vehicleId}`)?.getAttribute('data-val') === 'violation';
+      const phoneVal = document.getElementById(`phone-btn-${vehicleId}`)?.getAttribute('data-val') === 'violation';
+      const inCabVal = document.getElementById(`cab-btn-${vehicleId}`)?.getAttribute('data-val') === 'ok';
+      const onRoadVal = document.getElementById(`road-btn-${vehicleId}`)?.getAttribute('data-val') === 'ok';
+
+      const payload = {
+        vehicle_id: vehicleId,
+        vehicle_name: vehicleName,
+        driver_name: driverName,
+        seatbelt_violation: sbVal,
+        phone_violation: phoneVal,
+        driver_in_cab: inCabVal,
+        on_road: onRoadVal,
+        driver_camera_img: driverImg,
+        road_camera_img: roadImg,
+        notes: (sbVal || phoneVal) ? "Safety violation logged by dispatcher" : "Routine compliance check: OK"
+      };
+
+      try {
+        const res = await fetch('/api/violations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const result = await res.json();
+        if (result.success) {
+          updateViolationCount();
+          document.getElementById('statusMessage').textContent = `Logged check for ${vehicleName}.`;
+        }
+      } catch (err) {
+        alert("Error saving log: " + err.message);
+      }
+    }
+
+    async function refreshVehicleCamera(vehicleId, vehicleName) {
+      document.getElementById('statusMessage').textContent = `Refreshing cameras for ${vehicleName}...`;
+      try {
+        const res = await fetch('/api/vehicles/refresh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ vehicle_id: vehicleId, vehicle_name: vehicleName })
+        });
+        const data = await res.json();
+        if (data.success) {
+          document.getElementById('statusMessage').textContent = `Successfully updated cameras for ${vehicleName}.`;
+          syncVehicles(false);
+        } else {
+          document.getElementById('statusMessage').textContent = `Could not refresh ${vehicleName}: ${data.notes || data.status_text}`;
+        }
+      } catch (err) {
+        document.getElementById('statusMessage').textContent = `Error refreshing ${vehicleName}: ` + err.message;
+      }
+    }
+
+    async function refreshAllTargetCameras(force = false) {
+      const conc = document.getElementById('concurrencySelect')?.value || 4;
+      const modeText = force ? " (testing all cameras)" : " (skipping powered-off)";
+      document.getElementById('statusMessage').textContent = `Starting parallel batch camera refresh (${conc} workers)${modeText}...`;
+      try {
+        const res = await fetch(`/api/vehicles/refresh-all?concurrency=${conc}&force=${force ? 'true' : 'false'}`, { method: 'POST' });
+        const data = await res.json();
+        document.getElementById('statusMessage').textContent = data.message;
+        if (data.status === 'busy') {
+          if (confirm(`A batch refresh is currently active. Would you like to stop it and start a new refresh with ${conc} parallel workers?`)) {
+            const res2 = await fetch(`/api/vehicles/refresh-all?concurrency=${conc}&force=${force ? 'true' : 'false'}&restart=true`, { method: 'POST' });
+            const data2 = await res2.json();
+            document.getElementById('statusMessage').textContent = data2.message;
+          }
+        } else if (data.status === 'skipped') {
+          alert(data.message);
+        }
+      } catch (err) {
+        document.getElementById('statusMessage').textContent = "Error: " + err.message;
+      }
+    }
+
+    async function stopBatchRefresh() {
+      try {
+        document.getElementById('statusMessage').textContent = "Stopping batch refresh...";
+        const res = await fetch('/api/vehicles/refresh-all/stop', { method: 'POST' });
+        const data = await res.json();
+        document.getElementById('statusMessage').textContent = data.message;
+        document.getElementById('stopBatchBtn')?.classList.add('hidden');
+      } catch (err) {
+        console.error("Error stopping batch refresh:", err);
+      }
+    }
+
+    async function resetOfflineFlags() {
+      try {
+        const res = await fetch('/api/vehicles/reset-offline', { method: 'POST' });
+        const data = await res.json();
+        document.getElementById('statusMessage').textContent = data.message;
+        syncVehicles(false);
+      } catch (err) {
+        alert("Error resetting flags: " + err.message);
+      }
+    }
+
+    async function updateViolationCount() {
+      try {
+        const res = await fetch('/api/violations');
+        const list = await res.json();
+        document.getElementById('violationCount').textContent = list.length;
+      } catch (e) {}
+    }
+
+    async function openViolationsModal() {
+      try {
+        const res = await fetch('/api/violations');
+        const list = await res.json();
+        const tbody = document.getElementById('violationsTableBody');
+
+        if (list.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="8" class="text-center py-6 text-slate-500">No violations or checks recorded yet.</td></tr>`;
+        } else {
+          tbody.innerHTML = list.map(r => `
+            <tr class="hover:bg-slate-700/30">
+              <td class="py-2 px-3 text-slate-400 whitespace-nowrap">${r.timestamp || ''}</td>
+              <td class="py-2 px-3 font-semibold text-white">${r.vehicle_name}</td>
+              <td class="py-2 px-3">${r.driver_name}</td>
+              <td class="py-2 px-3">
+                ${r.seatbelt_violation ? '<span class="px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-bold border border-red-500/30">VIOLATION</span>' : '<span class="text-emerald-400">OK</span>'}
+              </td>
+              <td class="py-2 px-3">
+                ${r.phone_violation ? '<span class="px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-bold border border-red-500/30">PHONE USED</span>' : '<span class="text-emerald-400">Clear</span>'}
+              </td>
+              <td class="py-2 px-3">${r.driver_in_cab ? 'Yes' : '<span class="text-yellow-400">Absent</span>'}</td>
+              <td class="py-2 px-3">${r.on_road ? 'On Road' : '<span class="text-slate-400">Off Road</span>'}</td>
+              <td class="py-2 px-3 text-slate-400">${r.notes || ''}</td>
+            </tr>
+          `).join('');
+        }
+
+        document.getElementById('violationsModal').classList.remove('hidden');
+      } catch (err) {
+        alert("Failed to load violations: " + err.message);
+      }
+    }
+
+    function closeViolationsModal() {
+      document.getElementById('violationsModal').classList.add('hidden');
+    }
+
+    function openImageModal(imgSrc, title) {
+      document.getElementById('modalImage').src = imgSrc;
+      document.getElementById('modalTitle').textContent = title || "Camera Feed Inspection";
+      document.getElementById('imageModal').classList.remove('hidden');
+    }
+
+    function closeImageModal() {
+      document.getElementById('imageModal').classList.add('hidden');
+    }
+
+    function updateAllTimeDeltas() {
+      document.querySelectorAll('[data-timestamp]').forEach(el => {
+        const raw = el.getAttribute('data-timestamp');
+        const text = formatTimeDelta(raw);
+        el.innerHTML = `<i class="fa-regular fa-clock text-[9px] mr-0.5"></i>${text}`;
+        el.className = `time-delta-badge px-2 py-0.5 rounded text-[10px] font-bold border ${getTimeDeltaBadgeClass(raw)}`;
+      });
+    }
+
+    // Update time deltas every minute (60 seconds)
+    setInterval(updateAllTimeDeltas, 60000);
+
+    function updateLiveCards(newData) {
+      if (!newData) return;
+      const allList = [...(newData.targets || []), ...(newData.others || [])];
+      let needsFullRender = false;
+
+      allList.forEach(v => {
+        const card = document.getElementById(`card-${v.id}`);
+        if (!card) {
+          needsFullRender = true;
+          return;
+        }
+
+        if (card.getAttribute('data-offline') !== String(!!v.is_offline)) {
+          needsFullRender = true;
+        }
+
+        // Update timestamp badge attribute and formatted text immediately
+        const deltaEl = document.getElementById(`delta-${v.id}`);
+        if (deltaEl && (v.last_refreshed_ts || v.last_refreshed_iso)) {
+          const tsVal = v.last_refreshed_ts || v.last_refreshed_iso;
+          deltaEl.setAttribute('data-timestamp', tsVal);
+          deltaEl.setAttribute('title', `Gomotive Camera: ${v.motive_camera_time || v.camera_status || ''}`);
+          const text = formatTimeDelta(tsVal);
+          deltaEl.innerHTML = `<i class="fa-regular fa-clock text-[9px] mr-0.5"></i>${text}`;
+          deltaEl.className = `time-delta-badge px-2 py-0.5 rounded text-[10px] font-bold border ${getTimeDeltaBadgeClass(tsVal)}`;
+        }
+
+        // Update camera status badge
+        const camStatusEl = card.querySelector('.camera-status-badge');
+        if (camStatusEl && v.camera_status) {
+          camStatusEl.textContent = v.camera_status;
+          const sLower = v.camera_status.toLowerCase();
+          camStatusEl.className = `camera-status-badge px-1.5 py-0.5 rounded text-[9px] font-bold text-white uppercase ${
+            sLower.includes('live') ? 'badge-live' : (sLower.includes('timed out') || sLower.includes('refused') ? 'badge-timeout' : 'badge-stale')
+          }`;
+        }
+
+        // Update images if changed
+        if (v.driver_camera_img) {
+          const dImg = card.querySelector('.driver-cam-img');
+          if (dImg) {
+            if (dImg.getAttribute('src') !== v.driver_camera_img) {
+              dImg.src = v.driver_camera_img;
+            }
+          } else {
+            needsFullRender = true;
+          }
+        }
+
+        if (v.road_camera_img) {
+          const rImg = card.querySelector('.road-cam-img');
+          if (rImg) {
+            if (rImg.getAttribute('src') !== v.road_camera_img) {
+              rImg.src = v.road_camera_img;
+            }
+          } else {
+            needsFullRender = true;
+          }
+        }
+      });
+
+      updateFilterCounts();
+      if (needsFullRender) {
+        renderVehicles();
+      } else {
+        updateAllTimeDeltas();
+      }
+    }
+
+    // Actively pull motion status from Motive every minute
+    async function pullMotionStatus() {
+      try {
+        const res = await fetch('/api/vehicles/motion');
+        if (!res.ok) return;
+        const data = await res.json();
+        const motionMap = data.motion || {};
+
+        const allV = vehiclesData.vehicles || [...(vehiclesData.targets || []), ...(vehiclesData.others || [])];
+        let hasChanges = false;
+        allV.forEach(v => {
+          const v_id = String(v.id || v.name);
+          const m = motionMap[v_id] || motionMap[v.name];
+          if (m) {
+            if (v.status !== m.status || v.motion_category !== m.motion_category || v.speed_mph !== m.speed_mph || (m.driver && v.driver !== m.driver)) {
+              hasChanges = true;
+              v.status = m.status;
+              v.motion_category = m.motion_category;
+              v.speed_mph = m.speed_mph;
+              if (m.driver) v.driver = m.driver;
+            }
+          }
+        });
+
+        // Re-evaluate target status for all vehicles based on live motion!
+        allV.forEach(v => {
+          const wasTarget = !!v.is_target;
+          v.is_target = evaluateIsTargetLocal(v, currentTargetConfig);
+          if (v.is_target !== wasTarget) {
+            hasChanges = true;
+          }
+        });
+        vehiclesData.targets = allV.filter(v => v.is_target);
+        vehiclesData.others = allV.filter(v => !v.is_target);
+        updateTargetCountBadge(vehiclesData.targets);
+
+        updateFilterCounts();
+        updateDropdownLabels();
+
+        if (hasChanges) {
+          renderVehicles();
+        } else {
+          allV.forEach(v => {
+            const card = document.getElementById(`card-${v.id}`);
+            if (card) {
+              const indEl = card.querySelector('.driver-motion-indicator');
+              if (indEl) indEl.innerHTML = getDriverMotionIndicatorHtml(v);
+              const pillEl = card.querySelector('.vehicle-motion-pill');
+              if (pillEl) {
+                const s = (v.status || '').toLowerCase();
+                const cat = (v.motion_category || '').toLowerCase();
+                let col = "bg-slate-700 text-slate-300";
+                if (cat === 'transit' || s.includes("transit") || s.includes("moving")) col = "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30";
+                else if (cat === 'idle' || s.includes("idle") || s.includes("idling")) col = "bg-amber-500/20 text-amber-400 border border-amber-500/30";
+                pillEl.className = `vehicle-motion-pill px-2 py-0.5 rounded text-[10px] font-semibold ${col}`;
+                pillEl.textContent = v.status || 'In service';
+              }
+            }
+          });
+        }
+      } catch (err) {
+        console.debug("Motion pull error:", err);
+      }
+    }
+
+    // Polling for live status and background batch updates
+    let wasBusy = false;
+    async function checkStatusLoop() {
+      try {
+        const res = await fetch('/api/status');
+        const st = await res.json();
+        
+        const pill = document.getElementById('connectionPill');
+        const text = document.getElementById('connectionText');
+
+        if (st.logged_in) {
+          pill.className = "flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-semibold";
+          pill.children[0].className = "w-2.5 h-2.5 rounded-full bg-emerald-400";
+          text.textContent = st.is_cdp ? "Chrome Connected (Port 9222)" : "Motive Connected";
+        } else {
+          pill.className = "flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-semibold";
+          pill.children[0].className = "w-2.5 h-2.5 rounded-full bg-red-400 animate-pulse";
+          text.textContent = st.is_cdp ? "Chrome Active - Log in to Motive" : "Login Required";
+        }
+
+        if (st.current_status) {
+          document.getElementById('statusMessage').textContent = st.current_status;
+        }
+
+        if (st.target_count !== undefined) {
+          if (st.offline_count > 0) {
+            document.getElementById('targetCountBadge').innerHTML = `${st.target_count} targets &bull; <span class="text-emerald-400 font-bold">${st.active_count} active</span> &bull; <span class="text-rose-400 font-bold" title="Skipped in batch refresh to save time">${st.offline_count} powered off</span>`;
+          } else {
+            document.getElementById('targetCountBadge').textContent = `${st.target_count || 0} target vehicles`;
+          }
+        }
+
+        // Toggle stop button visibility
+        const stopBtn = document.getElementById('stopBatchBtn');
+        if (stopBtn) {
+          if (st.is_busy) {
+            stopBtn.classList.remove('hidden');
+          } else {
+            stopBtn.classList.add('hidden');
+          }
+        }
+
+        // If batch refresh is in progress or just finished, update cards live
+        if (st.is_busy || wasBusy) {
+          const vRes = await fetch('/api/vehicles');
+          vehiclesData = await vRes.json();
+          updateLiveCards(vehiclesData);
+        }
+        wasBusy = !!st.is_busy;
+      } catch (e) {
+        console.debug("Status loop poll error:", e);
+      }
+    }
+    setInterval(checkStatusLoop, 2500);
+
+    // Initial load
+    loadTargetConfig().then(() => {
+      loadUserPreferences();
+      checkStatus();
+      syncVehicles(false).then(() => {
+        pullMotionStatus();
+      });
+    });
+    // Actively pull motion status every minute (60,000ms)
+    setInterval(pullMotionStatus, 60000);
+    updateViolationCount();
+  </script>
+</body>
+</html>
