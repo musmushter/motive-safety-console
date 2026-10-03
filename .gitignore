@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -16,6 +16,8 @@ ENV/
 # Sensitive authentication & browser session data
 data/browser_profile/
 data/motive_auth.json
+data/captured_org_tokens.json
+data/motive_org2_auth.json
 
 # Runtime captured dashcam snapshots
 snapshots/*

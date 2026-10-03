@@ -1,6 +1,4 @@
 import asyncio
-import csv
-import io
 import json
 import logging
 import time
@@ -37,34 +35,6 @@ async def motion_polling_loop():
             await motive_client.fetch_live_motion_statuses()
         except Exception as e:
             logger.warning(f"Error in motion polling loop: {e}")
-
-# In-memory violation records
-VIOLATIONS_FILE = config.DATA_DIR / "violations.json"
-
-def load_violations() -> List[Dict[str, Any]]:
-    if VIOLATIONS_FILE.exists():
-        try:
-            with open(VIOLATIONS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return []
-    return []
-
-def save_violations(records: List[Dict[str, Any]]):
-    with open(VIOLATIONS_FILE, "w", encoding="utf-8") as f:
-        json.dump(records, f, indent=2)
-
-class ViolationRecord(BaseModel):
-    vehicle_id: str
-    vehicle_name: str
-    driver_name: str
-    seatbelt_violation: bool
-    phone_violation: bool
-    driver_in_cab: bool
-    on_road: bool
-    notes: Optional[str] = ""
-    driver_camera_img: Optional[str] = None
-    road_camera_img: Optional[str] = None
 
 class RefreshRequest(BaseModel):
     vehicle_id: Optional[str] = None
@@ -108,12 +78,16 @@ async def get_status():
     targets = [v for v in motive_client.cached_vehicles if v.get("is_target")]
     offline_count = len([v for v in targets if v.get("is_offline")])
     active_count = len(targets) - offline_count
+    heart_count = len([v for v in motive_client.cached_vehicles if v.get("organization") == "HEART"])
+    ht_count = len([v for v in motive_client.cached_vehicles if v.get("organization") == "Houston Towing"])
     return {
         "logged_in": login_info["logged_in"],
         "url": login_info["url"],
         "is_busy": motive_client.is_busy,
         "current_status": motive_client.current_status,
         "total_cached_vehicles": len(motive_client.cached_vehicles),
+        "organizations": ["HEART", "Houston Towing"],
+        "org_counts": {"HEART": heart_count, "Houston Towing": ht_count},
         "target_count": len(targets),
         "active_count": active_count,
         "offline_count": offline_count
@@ -142,8 +116,20 @@ async def get_vehicles(refresh: bool = False):
 
     # Re-evaluate targets with current target config and live motion
     motive_client.recalculate_targets()
-    targets = [v for v in motive_client.cached_vehicles if v.get("is_target")]
-    others = [v for v in motive_client.cached_vehicles if not v.get("is_target")]
+
+    # Deduplicate vehicles by unique ID
+    deduped_v = []
+    seen_vids = set()
+    for v in motive_client.cached_vehicles:
+        vid = str(v.get("id") or v.get("numeric_id") or v.get("name") or "").strip()
+        if vid and vid not in seen_vids:
+            seen_vids.add(vid)
+            deduped_v.append(v)
+    vehicles = deduped_v
+    motive_client.cached_vehicles = vehicles
+
+    targets = [v for v in vehicles if v.get("is_target")]
+    others = [v for v in vehicles if not v.get("is_target")]
 
     # Associations / Groups breakdown
     groups = ["HEART", "ALL AMERICAN", "BMW", "HOUSTON TOWING", "Unassigned"]
@@ -159,12 +145,20 @@ async def get_vehicles(refresh: bool = False):
         if not matched:
             group_counts["Unassigned"] += 1
 
+    org_counts = {
+        "All": len(vehicles),
+        "HEART": len([v for v in vehicles if v.get("organization") == "HEART"]),
+        "Houston Towing": len([v for v in vehicles if v.get("organization") == "Houston Towing"])
+    }
+
     return {
         "vehicles": vehicles,
         "targets": targets,
         "others": others,
         "groups": groups,
         "group_counts": group_counts,
+        "organizations": ["HEART", "Houston Towing"],
+        "org_counts": org_counts,
         "total": len(vehicles)
     }
 
@@ -258,6 +252,15 @@ async def update_target_config(req: TargetConfigRequest):
         "target_count": target_count
     }
 
+class OpenInMotiveRequest(BaseModel):
+    vehicle_id: str
+
+@app.post("/api/vehicles/open-in-motive")
+async def open_vehicle_in_motive_route(req: OpenInMotiveRequest):
+    """Opens vehicle live map in the dedicated profile window (Default for HEART, Profile 1 for Houston Towing)."""
+    result = await motive_client.open_vehicle_in_motive(req.vehicle_id)
+    return result
+
 batch_refresh_cancel_requested = False
 
 @app.post("/api/vehicles/refresh-all/stop")
@@ -269,7 +272,7 @@ async def stop_refresh_all():
     return {"status": "stopped", "message": "Batch camera refresh stopped."}
 
 @app.post("/api/vehicles/refresh-all")
-async def refresh_all_cameras(background_tasks: BackgroundTasks, concurrency: int = 4, force: bool = False, restart: bool = False):
+async def refresh_all_cameras(background_tasks: BackgroundTasks, concurrency: int = 6, force: bool = False, restart: bool = False):
     """Triggers parallel batch camera refresh for target vehicles, skipping powered-off and stationary vehicles unless targeted."""
     global batch_refresh_cancel_requested
     if motive_client.is_busy:
@@ -324,7 +327,7 @@ async def refresh_all_cameras(background_tasks: BackgroundTasks, concurrency: in
             "message": f"No eligible target vehicles to refresh{skip_msg}. Use 'Retry All' to test offline units or include stationary in target settings."
         }
 
-    pool_size = max(1, min(concurrency, 6))
+    pool_size = max(1, min(concurrency, 8))
 
     async def _parallel_batch_refresh(vehicle_list, pool, skipped_off, skipped_stat):
         global batch_refresh_cancel_requested
@@ -341,14 +344,14 @@ async def refresh_all_cameras(background_tasks: BackgroundTasks, concurrency: in
         if skipped_off > 0:
             skip_parts.append(f"{skipped_off} powered-off")
         skip_str = f" (Skipped {', '.join(skip_parts)})" if skip_parts else ""
-        motive_client.current_status = f"Starting parallel refresh for {total} active target vehicles ({pool} workers)...{skip_str}"
+        motive_client.current_status = f"Starting refresh for {total} active target vehicles...{skip_str}"
 
         async def _worker(idx, v):
             nonlocal completed
             if batch_refresh_cancel_requested:
                 return
             if idx > 0 and idx < pool:
-                await asyncio.sleep(idx * 0.8)
+                await asyncio.sleep(idx * 0.2)
             async with sem:
                 if batch_refresh_cancel_requested:
                     return
@@ -388,7 +391,7 @@ async def refresh_all_cameras(background_tasks: BackgroundTasks, concurrency: in
                 finally:
                     completed += 1
                     if not batch_refresh_cancel_requested:
-                        motive_client.current_status = f"Parallel refresh: {completed}/{total} completed ({pool} workers active)..."
+                        motive_client.current_status = f"Refreshing fleet: {completed}/{total} completed..."
 
         try:
             tasks = [_worker(i, v) for i, v in enumerate(vehicle_list)]
@@ -414,41 +417,5 @@ async def refresh_all_cameras(background_tasks: BackgroundTasks, concurrency: in
         "skipped_offline": skipped_offline,
         "skipped_stationary": skipped_stationary,
         "concurrency": pool_size,
-        "message": f"Started refreshing {len(targets)} active vehicles{skip_text} with {pool_size} parallel workers."
+        "message": f"Started refreshing {len(targets)} active vehicles{skip_text} in background."
     }
-
-@app.post("/api/violations")
-async def record_violation(v: ViolationRecord):
-    records = load_violations()
-    entry = v.dict()
-    entry["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    records.insert(0, entry)
-    save_violations(records)
-    return {"success": True, "record": entry}
-
-@app.get("/api/violations")
-async def get_violations():
-    return load_violations()
-
-@app.get("/api/violations/export")
-async def export_violations():
-    records = load_violations()
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["Timestamp", "Vehicle", "Driver", "Seatbelt Violation", "Phone Violation", "Driver In Cab", "On Road", "Notes"])
-    for r in records:
-        writer.writerow([
-            r.get("timestamp", ""),
-            r.get("vehicle_name", ""),
-            r.get("driver_name", ""),
-            "YES" if r.get("seatbelt_violation") else "NO",
-            "YES" if r.get("phone_violation") else "NO",
-            "YES" if r.get("driver_in_cab") else "NO",
-            "YES" if r.get("on_road") else "NO",
-            r.get("notes", "")
-        ])
-    return Response(
-        content=output.getvalue(),
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=safety_violations_{datetime.now().strftime('%Y%m%d')}.csv"}
-    )

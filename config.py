@@ -1,4 +1,4 @@
-﻿import os
+import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -25,3 +25,7 @@ MOTIVE_URL = "https://app.gomotive.com/en-US"
 # Web server config
 PORT = 8000
 HOST = "127.0.0.1"
+
+# Chrome configuration for multi-organization monitoring
+CHROME_PATH = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+CHROME_USER_DATA_DIR = Path(r"C:\Users\musta\fsl_tracker\console_profile")

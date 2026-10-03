@@ -60,17 +60,6 @@
           <i class="fa-solid fa-arrows-rotate"></i> Sync Fleet
         </button>
 
-        <div class="flex items-center gap-1.5 bg-slate-700/80 border border-slate-600 rounded-lg px-2.5 py-1 text-xs">
-          <i class="fa-solid fa-bolt text-amber-400"></i>
-          <label for="concurrencySelect" class="text-slate-300 font-medium">Workers:</label>
-          <select id="concurrencySelect" onchange="saveUserPreferences()" class="bg-slate-800 border border-slate-600 text-amber-400 font-bold rounded px-1.5 py-0.5 text-xs focus:outline-none focus:border-amber-400">
-            <option value="4" selected>4 Parallel</option>
-            <option value="3">3 Parallel</option>
-            <option value="2">2 Parallel</option>
-            <option value="1">1 Sequential</option>
-          </select>
-        </div>
-
         <button onclick="refreshAllTargetCameras(false)" class="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-lg shadow-amber-500/20 transition">
           <i class="fa-solid fa-camera-rotate"></i> Refresh All Target Cameras
         </button>
@@ -81,10 +70,6 @@
 
         <button onclick="refreshAllTargetCameras(true)" title="Retry all cameras including previously flagged powered-off cameras" class="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 border border-slate-600 text-xs font-medium text-slate-200 flex items-center gap-1.5 transition">
           <i class="fa-solid fa-rotate text-amber-400"></i> Retry All (Inc. Offline)
-        </button>
-
-        <button onclick="openViolationsModal()" class="px-3 py-1.5 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 text-xs font-semibold flex items-center gap-1.5 transition">
-          <i class="fa-solid fa-triangle-exclamation"></i> Violations Log (<span id="violationCount">0</span>)
         </button>
       </div>
     </div>
@@ -144,6 +129,41 @@
 
         <!-- Filter Controls Container -->
         <div class="flex flex-wrap items-center gap-2 text-xs">
+          <!-- Organization Multi-Select Dropdown -->
+          <div class="relative multi-dropdown">
+            <button type="button" onclick="toggleMultiDropdown('orgDropdown', event)" id="orgDropdownBtn" class="flex items-center gap-1.5 bg-slate-900/90 border border-slate-700 hover:border-slate-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 transition" title="Filter by Organization">
+              <i class="fa-solid fa-sitemap text-amber-400"></i>
+              <span id="orgBtnLabel" class="font-medium">Org: All</span>
+              <i class="fa-solid fa-chevron-down text-[9px] text-slate-400 ml-0.5"></i>
+            </button>
+            <div id="orgDropdown" class="hidden absolute left-0 top-full mt-1.5 w-60 bg-slate-900/95 border border-slate-700 rounded-xl shadow-2xl p-2.5 z-50 text-xs backdrop-blur-md">
+              <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800 px-1">
+                <span class="font-bold text-[11px] text-slate-300 uppercase tracking-wider">Organization</span>
+                <div class="flex items-center gap-1.5 text-[10px]">
+                  <button type="button" onclick="toggleAllCheckboxes('orgFilter', true)" class="text-amber-400 hover:underline">Select All</button>
+                  <span class="text-slate-600">&bull;</span>
+                  <button type="button" onclick="toggleAllCheckboxes('orgFilter', false)" class="text-slate-400 hover:underline">Clear</button>
+                </div>
+              </div>
+              <div class="space-y-1">
+                <label class="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-slate-800 cursor-pointer select-none">
+                  <div class="flex items-center gap-2">
+                    <input type="checkbox" name="orgFilter" value="HEART" onchange="onFilterCriteriaChanged()" checked class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+                    <span class="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-bold text-[10px]">HEART</span>
+                  </div>
+                  <span id="countOrgHEART" class="text-[10px] text-slate-400 font-semibold">(64)</span>
+                </label>
+                <label class="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-slate-800 cursor-pointer select-none">
+                  <div class="flex items-center gap-2">
+                    <input type="checkbox" name="orgFilter" value="Houston Towing" onchange="onFilterCriteriaChanged()" checked class="rounded border-slate-700 text-amber-500 focus:ring-0 bg-slate-800">
+                    <span class="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-bold text-[10px]">Houston Towing</span>
+                  </div>
+                  <span id="countOrgHoustonTowing" class="text-[10px] text-slate-400 font-semibold">(28)</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
           <!-- Association Multi-Select Dropdown -->
           <div class="relative multi-dropdown">
             <button type="button" onclick="toggleMultiDropdown('assocDropdown', event)" id="assocDropdownBtn" class="flex items-center gap-1.5 bg-slate-900/90 border border-slate-700 hover:border-slate-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 transition" title="Filter by Association / Group">
@@ -346,57 +366,90 @@
     </div>
   </main>
 
-  <!-- Image Lightbox Modal -->
-  <div id="imageModal" class="fixed inset-0 bg-black/90 z-50 hidden flex items-center justify-center p-4 backdrop-blur-sm" onclick="closeImageModal()">
-    <div class="relative max-w-5xl w-full bg-slate-900 border border-slate-700 rounded-xl overflow-hidden shadow-2xl" onclick="event.stopPropagation()">
-      <div class="p-3 border-b border-slate-800 flex justify-between items-center bg-slate-800/80">
-        <h3 id="modalTitle" class="text-sm font-bold text-slate-200">Camera Inspection</h3>
-        <button onclick="closeImageModal()" class="text-slate-400 hover:text-white p-1 rounded-lg">
+  <!-- Multi-Camera Lightbox Modal -->
+  <div id="lightboxModal" class="fixed inset-0 bg-black/95 z-50 hidden flex flex-col justify-between backdrop-blur-md" onclick="closeLightbox()">
+    <!-- Lightbox Top Header -->
+    <div class="px-6 py-3 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between gap-4 z-10" onclick="event.stopPropagation()">
+      <div class="flex items-center gap-3 flex-wrap">
+        <div>
+          <div class="flex items-center gap-2.5">
+            <h2 id="lbTruckTitle" class="text-lg font-black text-white tracking-wide">Vehicle Name</h2>
+            <span id="lbOrgBadge" class="px-2 py-0.5 rounded-full text-xs font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">HEART</span>
+            <span id="lbMotionBadge" class="px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/30">In Transit</span>
+            <span id="lbTimeBadge" class="px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Live</span>
+          </div>
+          <div id="lbDriverName" class="text-xs text-slate-400 mt-0.5 flex items-center gap-1.5">
+            <i class="fa-solid fa-user text-slate-500 text-[10px]"></i> Driver Name
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <span id="lbCounter" class="text-xs font-medium text-slate-400 bg-slate-800/80 px-2.5 py-1 rounded-lg border border-slate-700">Truck 1 of 1</span>
+        <button onclick="closeLightbox()" class="text-slate-400 hover:text-white p-2 rounded-lg bg-slate-800/60 hover:bg-slate-700 transition" title="Close (Escape)">
           <i class="fa-solid fa-xmark text-lg"></i>
         </button>
       </div>
-      <div class="p-4 flex items-center justify-center bg-black max-h-[80vh] overflow-hidden">
-        <img id="modalImage" src="" alt="Snapshot Detail" class="max-w-full max-h-[75vh] object-contain rounded">
+    </div>
+
+    <!-- Camera Switcher Thumbnail Strip -->
+    <div class="px-6 py-2 bg-slate-950/80 border-b border-slate-800/80 flex items-center gap-3 overflow-x-auto z-10" onclick="event.stopPropagation()">
+      <span class="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Angles:</span>
+      <div id="lbCameraStrip" class="flex items-center gap-2.5">
+        <!-- Thumbnails injected via JS -->
+      </div>
+    </div>
+
+    <!-- Main Image Stage -->
+    <div class="relative flex-1 flex items-center justify-center p-4 min-h-0 bg-black/60" onclick="event.stopPropagation()">
+      <button onclick="navigateLightbox(-1)" class="absolute left-4 top-1/2 -translate-y-1/2 z-20 w-12 h-20 bg-slate-800/80 hover:bg-slate-700 text-white border border-slate-600 rounded-xl flex items-center justify-center text-2xl transition hover:scale-105 shadow-xl" title="Previous Truck (Left Arrow)">
+        <i class="fa-solid fa-chevron-left"></i>
+      </button>
+
+      <img id="lbMainImg" src="" alt="Dashcam Inspection" class="max-w-[88vw] max-h-[66vh] object-contain rounded-lg shadow-2xl transition-all duration-150">
+
+      <div id="lbEmptyState" class="hidden text-center text-slate-500 p-8">
+        <i class="fa-solid fa-camera-slash text-4xl mb-2 text-slate-600"></i>
+        <p class="text-sm font-medium text-slate-400">No camera snapshot available for this truck.</p>
+        <p class="text-xs text-slate-600 mt-1">Click "Refresh Cam" below to capture a live frame.</p>
+      </div>
+
+      <button onclick="navigateLightbox(1)" class="absolute right-4 top-1/2 -translate-y-1/2 z-20 w-12 h-20 bg-slate-800/80 hover:bg-slate-700 text-white border border-slate-600 rounded-xl flex items-center justify-center text-2xl transition hover:scale-105 shadow-xl" title="Next Truck (Right Arrow)">
+        <i class="fa-solid fa-chevron-right"></i>
+      </button>
+    </div>
+
+    <!-- Lightbox Bottom Actions Bar -->
+    <div class="px-6 py-3 bg-slate-900/95 border-t border-slate-800 flex items-center justify-between gap-3 z-10" onclick="event.stopPropagation()">
+      <div class="text-[11px] text-slate-500 hidden sm:flex items-center gap-3">
+        <span><kbd class="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-slate-300">←</kbd> <kbd class="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-slate-300">→</kbd> Switch trucks</span>
+        <span><kbd class="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-slate-300">Esc</kbd> Close</span>
+      </div>
+
+      <div class="flex items-center gap-2 ml-auto">
+        <button id="lbWhatsAppBtn" class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg flex items-center gap-2 shadow-lg shadow-emerald-600/20 transition hover:scale-[1.02]">
+          <i class="fa-brands fa-whatsapp text-sm"></i> Copy for WhatsApp
+        </button>
+
+        <a id="lbMotiveLink" href="#" target="_blank" onclick="openInMotive(currentLightboxVehicleId, event)" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-medium text-xs rounded-lg flex items-center gap-1.5 transition">
+          <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i> Open in Motive
+        </a>
+
+        <button id="lbRefreshBtn" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg flex items-center gap-1.5 transition">
+          <i class="fa-solid fa-rotate"></i> Refresh Cam
+        </button>
+
+        <button onclick="closeLightbox()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs rounded-lg transition">
+          Close
+        </button>
       </div>
     </div>
   </div>
 
-  <!-- Violations Log Modal -->
-  <div id="violationsModal" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center p-4 backdrop-blur-sm" onclick="closeViolationsModal()">
-    <div class="relative max-w-4xl w-full bg-slate-800 border border-slate-700 rounded-xl overflow-hidden shadow-2xl" onclick="event.stopPropagation()">
-      <div class="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-750">
-        <h3 class="text-base font-bold text-slate-100 flex items-center gap-2">
-          <i class="fa-solid fa-triangle-exclamation text-red-400"></i> Safety Compliance & Violation Records
-        </h3>
-        <div class="flex items-center gap-2">
-          <a href="/api/violations/export" download class="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs rounded-lg flex items-center gap-1.5 transition">
-            <i class="fa-solid fa-file-csv"></i> Export CSV
-          </a>
-          <button onclick="closeViolationsModal()" class="text-slate-400 hover:text-white p-1 rounded-lg">
-            <i class="fa-solid fa-xmark text-lg"></i>
-          </button>
-        </div>
-      </div>
-      <div class="p-4 max-h-[60vh] overflow-y-auto">
-        <table class="w-full text-left text-xs border-collapse">
-          <thead>
-            <tr class="border-b border-slate-700 text-slate-400 bg-slate-900/50">
-              <th class="py-2.5 px-3">Timestamp</th>
-              <th class="py-2.5 px-3">Vehicle</th>
-              <th class="py-2.5 px-3">Driver</th>
-              <th class="py-2.5 px-3">Seatbelt</th>
-              <th class="py-2.5 px-3">Phone</th>
-              <th class="py-2.5 px-3">In Cab</th>
-              <th class="py-2.5 px-3">Road State</th>
-              <th class="py-2.5 px-3">Notes</th>
-            </tr>
-          </thead>
-          <tbody id="violationsTableBody" class="divide-y divide-slate-700/60 text-slate-300">
-            <!-- Rows injected via JS -->
-          </tbody>
-        </table>
-      </div>
-    </div>
+  <!-- Toast Notification -->
+  <div id="toastNotification" class="fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-900/95 border border-emerald-500/80 text-emerald-300 px-5 py-2.5 rounded-xl shadow-2xl font-semibold text-xs flex items-center gap-2.5 pointer-events-none opacity-0 transition-opacity duration-300 z-[100] backdrop-blur-md">
+    <i class="fa-solid fa-circle-check text-emerald-400 text-sm"></i>
+    <span id="toastMessage">Copied!</span>
   </div>
 
   <!-- Target Configuration Rules Modal -->
@@ -645,12 +698,13 @@
         currentTargetConfig = data.config || newCfg;
 
         // Recalculate local vehicles is_target
-        const allV = vehiclesData.vehicles || [...(vehiclesData.targets || []), ...(vehiclesData.others || [])];
+        const allV = getAllVehiclesList();
         allV.forEach(v => {
           v.is_target = evaluateIsTargetLocal(v, currentTargetConfig);
         });
         vehiclesData.targets = allV.filter(v => v.is_target);
         vehiclesData.others = allV.filter(v => !v.is_target);
+        vehiclesData.vehicles = allV;
 
         updateTargetCountBadge(vehiclesData.targets);
         updateFilterCounts();
@@ -666,16 +720,16 @@
     function saveUserPreferences() {
       try {
         const prefs = {
+          orgs: getCheckedValues('orgFilter'),
           assocs: getCheckedValues('assocFilter'),
           motions: getCheckedValues('motionFilter'),
           cameras: getCheckedValues('cameraFilter'),
           targetsOnly: document.getElementById('targetsOnlyBtn')?.getAttribute('data-active') === 'true',
           sort: document.getElementById('sortSelect')?.value || 'updated_desc',
           autoRefreshMins: parseInt(document.getElementById('autoRefreshSelect')?.value || '0', 10),
-          workers: document.getElementById('concurrencySelect')?.value || '4',
           targetConfig: currentTargetConfig
         };
-        localStorage.setItem('motive_safety_console_prefs_v2', JSON.stringify(prefs));
+        localStorage.setItem('motive_safety_console_prefs_v3', JSON.stringify(prefs));
       } catch (e) {
         console.debug("Could not save user preferences:", e);
       }
@@ -683,13 +737,23 @@
 
     function loadUserPreferences() {
       try {
-        const raw = localStorage.getItem('motive_safety_console_prefs_v2');
+        const raw = localStorage.getItem('motive_safety_console_prefs_v3');
         if (!raw) return;
         const prefs = JSON.parse(raw);
 
-        if (Array.isArray(prefs.assocs) && prefs.assocs.length > 0) {
+        if (Array.isArray(prefs.orgs) && prefs.orgs.length > 0) {
+          document.querySelectorAll('input[name="orgFilter"]').forEach(cb => {
+            cb.checked = prefs.orgs.includes(cb.value);
+          });
+        }
+
+        if (Array.isArray(prefs.assocs)) {
+          const userAssocs = prefs.assocs.map(a => a.toUpperCase());
+          if (!userAssocs.includes('HOUSTON TOWING')) {
+            userAssocs.push('HOUSTON TOWING');
+          }
           document.querySelectorAll('input[name="assocFilter"]').forEach(cb => {
-            cb.checked = prefs.assocs.includes(cb.value);
+            cb.checked = userAssocs.includes(cb.value.toUpperCase());
           });
         }
 
@@ -712,11 +776,6 @@
         if (prefs.sort) {
           const sortEl = document.getElementById('sortSelect');
           if (sortEl) sortEl.value = prefs.sort;
-        }
-
-        if (prefs.workers) {
-          const concEl = document.getElementById('concurrencySelect');
-          if (concEl) concEl.value = prefs.workers;
         }
 
         if (typeof prefs.autoRefreshMins === 'number' && prefs.autoRefreshMins > 0) {
@@ -874,13 +933,17 @@
     }
 
     function getAllVehiclesList() {
-      const targets = vehiclesData.targets || [];
-      const others = vehiclesData.others || [];
       const seen = new Set();
       const combined = [];
-      [...targets, ...others].forEach(v => {
-        if (v && v.id && !seen.has(v.id)) {
-          seen.add(v.id);
+      const source = (vehiclesData.vehicles && vehiclesData.vehicles.length > 0)
+        ? vehiclesData.vehicles
+        : [...(vehiclesData.targets || []), ...(vehiclesData.others || [])];
+
+      source.forEach(v => {
+        if (!v) return;
+        const key = String(v.id || v.numeric_id || v.name || '').trim();
+        if (key && !seen.has(key)) {
+          seen.add(key);
           combined.push(v);
         }
       });
@@ -890,7 +953,7 @@
     // Multi-Dropdown Toggle & Outside-Click Management
     function toggleMultiDropdown(dropdownId, event) {
       if (event) event.stopPropagation();
-      const allDropdowns = ['assocDropdown', 'motionDropdown', 'cameraDropdown'];
+      const allDropdowns = ['orgDropdown', 'assocDropdown', 'motionDropdown', 'cameraDropdown'];
       allDropdowns.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -905,7 +968,7 @@
     // Close all open dropdowns when clicking outside or pressing Escape
     document.addEventListener('click', (e) => {
       if (!e.target.closest('.multi-dropdown')) {
-        ['assocDropdown', 'motionDropdown', 'cameraDropdown'].forEach(id => {
+        ['orgDropdown', 'assocDropdown', 'motionDropdown', 'cameraDropdown'].forEach(id => {
           document.getElementById(id)?.classList.add('hidden');
         });
       }
@@ -913,7 +976,7 @@
 
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
-        ['assocDropdown', 'motionDropdown', 'cameraDropdown'].forEach(id => {
+        ['orgDropdown', 'assocDropdown', 'motionDropdown', 'cameraDropdown'].forEach(id => {
           document.getElementById(id)?.classList.add('hidden');
         });
       }
@@ -954,6 +1017,22 @@
     }
 
     function updateDropdownLabels() {
+      // 0. Organization Label
+      const allOrgCbs = Array.from(document.querySelectorAll('input[name="orgFilter"]'));
+      const checkedOrgs = allOrgCbs.filter(cb => cb.checked).map(cb => cb.value);
+      const orgLabelEl = document.getElementById('orgBtnLabel');
+      if (orgLabelEl) {
+        if (checkedOrgs.length === allOrgCbs.length) {
+          orgLabelEl.textContent = "Org: All";
+        } else if (checkedOrgs.length === 0) {
+          orgLabelEl.textContent = "Org: None (0)";
+        } else if (checkedOrgs.length === 1) {
+          orgLabelEl.textContent = `Org: ${checkedOrgs[0] === 'Houston Towing' ? 'HT' : 'HEART'}`;
+        } else {
+          orgLabelEl.textContent = `Org: ${checkedOrgs.join(', ')}`;
+        }
+      }
+
       // 1. Association Label
       const allAssocCbs = Array.from(document.querySelectorAll('input[name="assocFilter"]'));
       const checkedAssocs = allAssocCbs.filter(cb => cb.checked).map(cb => cb.value);
@@ -1008,8 +1087,9 @@
     }
 
     function getFilteredAndSortedVehicles() {
-      const allVehicles = vehiclesData.vehicles || [...(vehiclesData.targets || []), ...(vehiclesData.others || [])];
+      const allVehicles = getAllVehiclesList();
 
+      const selectedOrgs = getCheckedValues('orgFilter');
       const selectedAssocs = getCheckedValues('assocFilter');
       const targetsOnly = document.getElementById('targetsOnlyBtn')?.getAttribute('data-active') === 'true';
       const selectedMotions = getCheckedValues('motionFilter');
@@ -1018,10 +1098,16 @@
       const sortVal = document.getElementById('sortSelect')?.value || 'updated_desc';
 
       const filtered = allVehicles.filter(v => {
+        // 0. Organization match
+        const vOrg = v.organization || 'HEART';
+        if (selectedOrgs.length === 0) return false;
+        if (!selectedOrgs.includes(vOrg)) return false;
+
         // 1. Association match
-        const vGroup = v.group || 'Unassigned';
+        const vGroup = (v.group || 'Unassigned').toUpperCase();
         if (selectedAssocs.length === 0) return false;
-        if (!selectedAssocs.includes(vGroup)) return false;
+        const selectedAssocsUpper = selectedAssocs.map(a => a.toUpperCase());
+        if (!selectedAssocsUpper.includes(vGroup)) return false;
 
         // 2. Targets Only match
         if (targetsOnly && !v.is_target) return false;
@@ -1065,7 +1151,8 @@
           const group = (v.group || '').toLowerCase();
           const status = (v.status || '').toLowerCase();
           const camStatus = (v.camera_status || '').toLowerCase();
-          const matches = name.includes(query) || driver.includes(query) || group.includes(query) || status.includes(query) || camStatus.includes(query);
+          const org = (v.organization || '').toLowerCase();
+          const matches = name.includes(query) || driver.includes(query) || group.includes(query) || status.includes(query) || camStatus.includes(query) || org.includes(query);
           if (!matches) return false;
         }
 
@@ -1127,8 +1214,10 @@
     }
 
     function updateFilterCounts() {
-      const allVehicles = vehiclesData.vehicles || [...(vehiclesData.targets || []), ...(vehiclesData.others || [])];
+      const allVehicles = getAllVehiclesList();
 
+      let countHeart = 0;
+      let countHT = 0;
       let countTransit = 0;
       let countIdle = 0;
       let countStationary = 0;
@@ -1145,12 +1234,16 @@
       };
 
       allVehicles.forEach(v => {
-        const grp = v.group || 'Unassigned';
-        if (assocCounts[grp] !== undefined) {
-          assocCounts[grp]++;
-        } else {
-          assocCounts['Unassigned']++;
-        }
+        const org = v.organization || 'HEART';
+        if (org === 'Houston Towing') countHT++;
+        else countHeart++;
+
+        const grp = (v.group || 'Unassigned').toUpperCase();
+        if (grp === 'HEART') assocCounts['HEART']++;
+        else if (grp === 'ALL AMERICAN') assocCounts['ALL AMERICAN']++;
+        else if (grp === 'BMW') assocCounts['BMW']++;
+        else if (grp === 'HOUSTON TOWING') assocCounts['HOUSTON TOWING']++;
+        else assocCounts['Unassigned']++;
 
         const s = (v.status || '').toLowerCase();
         const cat = (v.motion_category || '').toLowerCase();
@@ -1171,6 +1264,12 @@
         if (isPoweredOff) countOffline++;
         if (hasImages) countWithImages++;
       });
+
+      // Update Org dropdown item counts
+      const elOHeart = document.getElementById('countOrgHEART');
+      const elOHT = document.getElementById('countOrgHoustonTowing');
+      if (elOHeart) elOHeart.textContent = `(${countHeart})`;
+      if (elOHT) elOHT.textContent = `(${countHT})`;
 
       // Update Association dropdown item counts
       const elAHeart = document.getElementById('countAssoc-HEART');
@@ -1231,6 +1330,7 @@
       if (searchInput) searchInput.value = '';
       if (clearBtn) clearBtn.classList.add('hidden');
 
+      toggleAllCheckboxes('orgFilter', true);
       toggleAllCheckboxes('assocFilter', true);
       setTargetsOnly(false);
       toggleAllCheckboxes('motionFilter', true);
@@ -1251,12 +1351,13 @@
         // Always pull live motion status so freshly synced fleet has up-to-date telematics
         await pullMotionStatus();
 
-        const allV = vehiclesData.vehicles || [...(vehiclesData.targets || []), ...(vehiclesData.others || [])];
+        const allV = getAllVehiclesList();
         allV.forEach(v => {
           v.is_target = evaluateIsTargetLocal(v, currentTargetConfig);
         });
         vehiclesData.targets = allV.filter(v => v.is_target);
         vehiclesData.others = allV.filter(v => !v.is_target);
+        vehiclesData.vehicles = allV;
 
         updateTargetCountBadge(vehiclesData.targets);
         updateFilterCounts();
@@ -1341,6 +1442,15 @@
       }
     }
 
+    function getOrgBadgeHtml(org) {
+      const o = (org || 'HEART');
+      if (o === 'Houston Towing') {
+        return `<span class="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-bold text-[10px] tracking-wide flex items-center gap-1" title="Organization: Houston Towing & Transportation LLC."><i class="fa-solid fa-building text-[9px]"></i>HT</span>`;
+      } else {
+        return `<span class="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-bold text-[10px] tracking-wide flex items-center gap-1" title="Organization: HOUSTON EMERGENCY AUTO RESCUE & TRUCKING LLC"><i class="fa-solid fa-building text-[9px]"></i>HEART</span>`;
+      }
+    }
+
     function getGroupBadgeHtml(group) {
       const g = (group || 'Unassigned').toUpperCase();
       if (g === 'HEART') {
@@ -1374,6 +1484,7 @@
     }
 
     function createVehicleCard(v) {
+      const orgBadge = getOrgBadgeHtml(v.organization);
       const groupBadge = getGroupBadgeHtml(v.group);
       const driverMotionIndicator = getDriverMotionIndicatorHtml(v);
 
@@ -1425,10 +1536,11 @@
                 <i class="fa-solid fa-truck"></i>
               </div>
               <div>
-                <div class="flex items-center gap-2">
-                  <a href="${motiveVehicleUrl}" target="_blank" rel="noopener noreferrer" class="font-bold text-sm text-white hover:text-amber-400 transition tracking-wide flex items-center gap-1" title="Open ${v.name} in Motive Live Tab">
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  <a href="${motiveVehicleUrl}" target="_blank" rel="noopener noreferrer" onclick="openInMotive('${v.id}', event)" class="font-bold text-sm text-white hover:text-amber-400 transition tracking-wide flex items-center gap-1" title="Open ${v.name} in Motive (${v.organization || 'HEART'})">
                     <span>${v.name}</span>
                   </a>
+                  ${orgBadge}
                   ${groupBadge}
                 </div>
                 <p class="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5 driver-info-line">
@@ -1455,7 +1567,7 @@
                 <i class="fa-regular fa-clock text-[9px] mr-0.5"></i>${deltaText}
               </span>
               <!-- Motive Vehicle Page Button -->
-              <a href="${motiveVehicleUrl}" target="_blank" rel="noopener noreferrer" title="Open ${v.name} in Motive Live Tab" class="px-2.5 py-1.5 bg-slate-700 hover:bg-amber-500 hover:text-slate-950 text-amber-400 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 border border-slate-600 hover:border-amber-400 shadow-sm">
+              <a href="${motiveVehicleUrl}" target="_blank" rel="noopener noreferrer" onclick="openInMotive('${v.id}', event)" title="Open ${v.name} in Motive (${v.organization || 'HEART'})" class="px-2.5 py-1.5 bg-slate-700 hover:bg-amber-500 hover:text-slate-950 text-amber-400 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 border border-slate-600 hover:border-amber-400 shadow-sm">
                 <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
                 <span class="text-[10px]">Motive</span>
               </a>
@@ -1487,16 +1599,16 @@
                 </span>
               </div>
               ${driverImg ? `
-                <button onclick="openImageModal('${driverImg}', '${v.name} - Driver View')" class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1 bg-black/60 hover:bg-black/90 text-white rounded text-xs transition">
+                <button onclick="event.stopPropagation(); openLightbox('${v.id}', 'driver')" class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1 bg-black/60 hover:bg-black/90 text-white rounded text-xs transition" title="Inspect Fullscreen">
                   <i class="fa-solid fa-magnifying-glass-plus"></i>
                 </button>
               ` : ''}
             </div>
 
             <!-- Road Camera -->
-            <div class="relative camera-box rounded-lg overflow-hidden border border-slate-700 group">
+            <div class="relative camera-box rounded-lg overflow-hidden border border-slate-700 group cursor-pointer" onclick="openLightbox('${v.id}', 'road')">
               ${roadImg ? `
-                <img src="${roadImg}" alt="Road View" class="road-cam-img w-full h-full object-cover">
+                <img src="${roadImg}" alt="Road View" class="road-cam-img w-full h-full object-cover transition duration-200 group-hover:scale-[1.02]">
               ` : `
                 <div class="w-full h-full flex flex-col items-center justify-center text-slate-500 p-4 text-center">
                   <i class="fa-solid fa-road text-2xl mb-1 text-slate-600"></i>
@@ -1510,124 +1622,62 @@
                 </span>
               </div>
               ${roadImg ? `
-                <button onclick="openImageModal('${roadImg}', '${v.name} - Road View')" class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1 bg-black/60 hover:bg-black/90 text-white rounded text-xs transition">
+                <button onclick="event.stopPropagation(); openLightbox('${v.id}', 'road')" class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1 bg-black/60 hover:bg-black/90 text-white rounded text-xs transition" title="Inspect Fullscreen">
                   <i class="fa-solid fa-magnifying-glass-plus"></i>
                 </button>
               ` : ''}
             </div>
           </div>
 
-          <!-- Quick Compliance Check & Action Bar -->
-          <div class="p-3 bg-slate-800 border-t border-slate-700/80 flex flex-wrap items-center justify-between gap-2 text-xs">
-            <div class="flex flex-wrap items-center gap-1.5">
-              <!-- Seatbelt Toggle -->
-              <button id="sb-btn-${v.id}" onclick="toggleStatus('sb', '${v.id}')" data-val="ok" class="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 text-[11px] font-medium border border-slate-600 flex items-center gap-1">
-                <i class="fa-solid fa-circle-check text-emerald-400"></i> Seatbelt OK
+          <!-- Option C Action Bar -->
+          <div class="p-2.5 bg-slate-800 border-t border-slate-700/80 flex items-center justify-between gap-2 text-xs">
+            <div class="flex items-center gap-1.5">
+              <button onclick="copyForWhatsApp('${v.id}')" class="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-[11px] flex items-center gap-1.5 shadow-sm transition hover:scale-[1.02]" title="Copy WhatsApp Image Collage & Dispatch Text to Clipboard">
+                <i class="fa-brands fa-whatsapp text-sm"></i> Copy for WhatsApp
               </button>
-
-              <!-- Phone Toggle -->
-              <button id="phone-btn-${v.id}" onclick="toggleStatus('phone', '${v.id}')" data-val="ok" class="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 text-[11px] font-medium border border-slate-600 flex items-center gap-1">
-                <i class="fa-solid fa-mobile-screen text-slate-400"></i> Phone Clear
-              </button>
-
-              <!-- In Cab Toggle -->
-              <button id="cab-btn-${v.id}" onclick="toggleStatus('cab', '${v.id}')" data-val="ok" class="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 text-[11px] font-medium border border-slate-600 flex items-center gap-1">
-                <i class="fa-solid fa-user-check text-blue-400"></i> In Cab
-              </button>
-
-              <!-- Road Toggle -->
-              <button id="road-btn-${v.id}" onclick="toggleStatus('road', '${v.id}')" data-val="ok" class="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 text-[11px] font-medium border border-slate-600 flex items-center gap-1">
-                <i class="fa-solid fa-road text-slate-400"></i> On Road
+              <button onclick="openLightbox('${v.id}')" class="px-2.5 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-[11px] font-medium border border-slate-600 flex items-center gap-1.5 transition" title="Inspect multi-angle camera feeds fullscreen">
+                <i class="fa-solid fa-expand text-[10px]"></i> Inspect
               </button>
             </div>
-
-            <button onclick="logComplianceCheck('${v.id}', '${v.name}', '${v.driver || 'Unassigned'}', '${driverImg}', '${roadImg}')" class="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[11px] flex items-center gap-1 transition">
-              <i class="fa-solid fa-floppy-disk"></i> Log Check
-            </button>
+            <div class="flex items-center gap-1.5">
+              <button onclick="refreshVehicleCamera('${v.id}', '${v.name}')" title="${isOffline ? 'Powered off (skipped in batch refresh). Click to manually retry.' : 'Refresh Live Camera'}" class="px-2 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-[11px] font-medium border border-slate-600 flex items-center gap-1 transition">
+                <i class="fa-solid fa-arrows-rotate text-[10px]"></i> Refresh
+              </button>
+              <a href="${v.live_url || v.vehicle_url || `https://app.gomotive.com/en-US/#/fleetview/vehicles/summary/${v.id}`}" target="_blank" onclick="openInMotive('${v.id}', event)" class="px-2 py-1.5 rounded-lg bg-slate-700/60 hover:bg-slate-600 text-slate-300 hover:text-white text-[11px] font-medium border border-slate-600/60 flex items-center gap-1 transition" title="Open in Motive Web Console (${v.organization || 'HEART'})">
+                <i class="fa-solid fa-arrow-up-right-from-square text-[9px]"></i> Motive
+              </a>
+            </div>
           </div>
         </div>
       `;
     }
 
-    function toggleStatus(type, id) {
-      const btn = document.getElementById(`${type}-btn-${id}`);
-      const current = btn.getAttribute('data-val');
-
-      if (type === 'sb') {
-        if (current === 'ok') {
-          btn.setAttribute('data-val', 'violation');
-          btn.className = "px-2 py-1 rounded bg-red-600 text-white text-[11px] font-bold border border-red-500 flex items-center gap-1";
-          btn.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> NO SEATBELT`;
-        } else {
-          btn.setAttribute('data-val', 'ok');
-          btn.className = "px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 text-[11px] font-medium border border-slate-600 flex items-center gap-1";
-          btn.innerHTML = `<i class="fa-solid fa-circle-check text-emerald-400"></i> Seatbelt OK`;
-        }
-      } else if (type === 'phone') {
-        if (current === 'ok') {
-          btn.setAttribute('data-val', 'violation');
-          btn.className = "px-2 py-1 rounded bg-red-600 text-white text-[11px] font-bold border border-red-500 flex items-center gap-1";
-          btn.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> PHONE IN HAND`;
-        } else {
-          btn.setAttribute('data-val', 'ok');
-          btn.className = "px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 text-[11px] font-medium border border-slate-600 flex items-center gap-1";
-          btn.innerHTML = `<i class="fa-solid fa-mobile-screen text-slate-400"></i> Phone Clear`;
-        }
-      } else if (type === 'cab') {
-        if (current === 'ok') {
-          btn.setAttribute('data-val', 'absent');
-          btn.className = "px-2 py-1 rounded bg-yellow-600 text-white text-[11px] font-bold border border-yellow-500 flex items-center gap-1";
-          btn.innerHTML = `<i class="fa-solid fa-person-circle-xmark"></i> NOT IN CAB`;
-        } else {
-          btn.setAttribute('data-val', 'ok');
-          btn.className = "px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 text-[11px] font-medium border border-slate-600 flex items-center gap-1";
-          btn.innerHTML = `<i class="fa-solid fa-user-check text-blue-400"></i> In Cab`;
-        }
-      } else if (type === 'road') {
-        if (current === 'ok') {
-          btn.setAttribute('data-val', 'off');
-          btn.className = "px-2 py-1 rounded bg-slate-600 text-slate-300 text-[11px] font-medium border border-slate-500 flex items-center gap-1";
-          btn.innerHTML = `<i class="fa-solid fa-parking"></i> Off Road / Parked`;
-        } else {
-          btn.setAttribute('data-val', 'ok');
-          btn.className = "px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 text-[11px] font-medium border border-slate-600 flex items-center gap-1";
-          btn.innerHTML = `<i class="fa-solid fa-road text-slate-400"></i> On Road`;
-        }
+    async function openInMotive(vehicleId, event) {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
       }
-    }
-
-    async function logComplianceCheck(vehicleId, vehicleName, driverName, driverImg, roadImg) {
-      const sbVal = document.getElementById(`sb-btn-${vehicleId}`)?.getAttribute('data-val') === 'violation';
-      const phoneVal = document.getElementById(`phone-btn-${vehicleId}`)?.getAttribute('data-val') === 'violation';
-      const inCabVal = document.getElementById(`cab-btn-${vehicleId}`)?.getAttribute('data-val') === 'ok';
-      const onRoadVal = document.getElementById(`road-btn-${vehicleId}`)?.getAttribute('data-val') === 'ok';
-
-      const payload = {
-        vehicle_id: vehicleId,
-        vehicle_name: vehicleName,
-        driver_name: driverName,
-        seatbelt_violation: sbVal,
-        phone_violation: phoneVal,
-        driver_in_cab: inCabVal,
-        on_road: onRoadVal,
-        driver_camera_img: driverImg,
-        road_camera_img: roadImg,
-        notes: (sbVal || phoneVal) ? "Safety violation logged by dispatcher" : "Routine compliance check: OK"
-      };
-
       try {
-        const res = await fetch('/api/violations', {
+        const res = await fetch('/api/vehicles/open-in-motive', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
+          body: JSON.stringify({ vehicle_id: vehicleId })
         });
-        const result = await res.json();
-        if (result.success) {
-          updateViolationCount();
-          document.getElementById('statusMessage').textContent = `Logged check for ${vehicleName}.`;
+        const data = await res.json();
+        if (data.success) {
+          showToast(`Focused ${data.vehicle_name || 'truck'} in ${data.organization} (${data.profile})`);
+          return true;
+        } else {
+          console.warn("Open in Motive backend returned:", data);
+          if (data.url) window.open(data.url, '_blank');
         }
       } catch (err) {
-        alert("Error saving log: " + err.message);
+        console.error("Error calling open-in-motive:", err);
+        const v = (vehiclesData.vehicles || []).find(x => String(x.id) === String(vehicleId));
+        if (v) {
+          const u = v.live_url || v.vehicle_url || `https://app.gomotive.com/en-US/#/fleetview/vehicles/summary/${v.id}`;
+          window.open(u, '_blank');
+        }
       }
     }
 
@@ -1652,16 +1702,15 @@
     }
 
     async function refreshAllTargetCameras(force = false) {
-      const conc = document.getElementById('concurrencySelect')?.value || 4;
       const modeText = force ? " (testing all cameras)" : " (skipping powered-off)";
-      document.getElementById('statusMessage').textContent = `Starting parallel batch camera refresh (${conc} workers)${modeText}...`;
+      document.getElementById('statusMessage').textContent = `Starting batch camera refresh${modeText}...`;
       try {
-        const res = await fetch(`/api/vehicles/refresh-all?concurrency=${conc}&force=${force ? 'true' : 'false'}`, { method: 'POST' });
+        const res = await fetch(`/api/vehicles/refresh-all?force=${force ? 'true' : 'false'}`, { method: 'POST' });
         const data = await res.json();
         document.getElementById('statusMessage').textContent = data.message;
         if (data.status === 'busy') {
-          if (confirm(`A batch refresh is currently active. Would you like to stop it and start a new refresh with ${conc} parallel workers?`)) {
-            const res2 = await fetch(`/api/vehicles/refresh-all?concurrency=${conc}&force=${force ? 'true' : 'false'}&restart=true`, { method: 'POST' });
+          if (confirm(`A batch refresh is currently active. Would you like to stop it and restart?`)) {
+            const res2 = await fetch(`/api/vehicles/refresh-all?force=${force ? 'true' : 'false'}&restart=true`, { method: 'POST' });
             const data2 = await res2.json();
             document.getElementById('statusMessage').textContent = data2.message;
           }
@@ -1696,60 +1745,424 @@
       }
     }
 
-    async function updateViolationCount() {
-      try {
-        const res = await fetch('/api/violations');
-        const list = await res.json();
-        document.getElementById('violationCount').textContent = list.length;
-      } catch (e) {}
+    function findVehicleById(id) {
+      const all = getAllVehiclesList();
+      return all.find(v => String(v.id) === String(id));
     }
 
-    async function openViolationsModal() {
-      try {
-        const res = await fetch('/api/violations');
-        const list = await res.json();
-        const tbody = document.getElementById('violationsTableBody');
+    function showToast(msg) {
+      const toast = document.getElementById('toastNotification');
+      const txt = document.getElementById('toastMessage');
+      if (!toast || !txt) return;
+      txt.textContent = msg;
+      toast.classList.remove('opacity-0', 'pointer-events-none');
+      toast.classList.add('opacity-100');
+      if (window._toastTimer) clearTimeout(window._toastTimer);
+      window._toastTimer = setTimeout(() => {
+        toast.classList.remove('opacity-100');
+        toast.classList.add('opacity-0', 'pointer-events-none');
+      }, 2500);
+    }
 
-        if (list.length === 0) {
-          tbody.innerHTML = `<tr><td colspan="8" class="text-center py-6 text-slate-500">No violations or checks recorded yet.</td></tr>`;
-        } else {
-          tbody.innerHTML = list.map(r => `
-            <tr class="hover:bg-slate-700/30">
-              <td class="py-2 px-3 text-slate-400 whitespace-nowrap">${r.timestamp || ''}</td>
-              <td class="py-2 px-3 font-semibold text-white">${r.vehicle_name}</td>
-              <td class="py-2 px-3">${r.driver_name}</td>
-              <td class="py-2 px-3">
-                ${r.seatbelt_violation ? '<span class="px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-bold border border-red-500/30">VIOLATION</span>' : '<span class="text-emerald-400">OK</span>'}
-              </td>
-              <td class="py-2 px-3">
-                ${r.phone_violation ? '<span class="px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-bold border border-red-500/30">PHONE USED</span>' : '<span class="text-emerald-400">Clear</span>'}
-              </td>
-              <td class="py-2 px-3">${r.driver_in_cab ? 'Yes' : '<span class="text-yellow-400">Absent</span>'}</td>
-              <td class="py-2 px-3">${r.on_road ? 'On Road' : '<span class="text-slate-400">Off Road</span>'}</td>
-              <td class="py-2 px-3 text-slate-400">${r.notes || ''}</td>
-            </tr>
-          `).join('');
+    function getWhatsAppText(v) {
+      const orgTag = v.organization ? ` [${v.organization}]` : ' [HEART]';
+      const lines = [
+        `🚨 *SAFETY CHECK* — ${v.name}${orgTag}`
+      ];
+      if (v.driver && v.driver !== 'Unassigned') {
+        lines.push(`👤 *Driver:* ${v.driver}`);
+      }
+      const speedPart = (v.speed_mph !== undefined && v.speed_mph !== null) ? ` (${v.speed_mph} mph)` : '';
+      if (v.status) {
+        lines.push(`📍 *Status:* ${v.status}${speedPart}`);
+      }
+      const tsVal = v.last_refreshed_ts || v.last_refreshed_iso;
+      if (tsVal) {
+        lines.push(`⏱️ *Snapshot:* ${formatTimeDelta(tsVal)}`);
+      }
+      const motiveUrl = v.live_url || v.vehicle_url || `https://app.gomotive.com/en-US/#/fleetview/vehicles/summary/${v.id}`;
+      if (motiveUrl) {
+        lines.push(`🔗 *Motive Live:* ${motiveUrl}`);
+      }
+      return lines.join('\n');
+    }
+
+    function loadImage(src) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Failed to load ' + src));
+        img.src = src;
+      });
+    }
+
+    function roundRect(ctx, x, y, width, height, radius) {
+      ctx.beginPath();
+      ctx.moveTo(x + radius, y);
+      ctx.lineTo(x + width - radius, y);
+      ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+      ctx.lineTo(x + width, y + height - radius);
+      ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+      ctx.lineTo(x + radius, y + height);
+      ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+      ctx.lineTo(x, y + radius);
+      ctx.quadraticCurveTo(x, y, x + radius, y);
+      ctx.closePath();
+    }
+
+    async function composeWhatsAppImage(v) {
+      const cams = [];
+      if (v.driver_camera_img) cams.push({ pos: 'driver', label: 'DRIVER VIEW (INWARD)', src: v.driver_camera_img });
+      if (v.road_camera_img) cams.push({ pos: 'road', label: 'ROAD VIEW (OUTWARD)', src: v.road_camera_img });
+
+      if (cams.length === 0) return null;
+
+      const loaded = [];
+      for (const cam of cams) {
+        try {
+          const img = await loadImage(cam.src);
+          loaded.push({ ...cam, img });
+        } catch (e) {
+          console.warn("Could not decode image for composition:", cam.src, e);
         }
+      }
+      if (loaded.length === 0) return null;
 
-        document.getElementById('violationsModal').classList.remove('hidden');
+      const W = 1080;
+      const pad = 24;
+      const gap = 16;
+      const headerH = 110;
+
+      // Hero image is driver view if available, else first
+      const heroObj = loaded.find(x => x.pos === 'driver') || loaded[0];
+      const heroImg = heroObj.img;
+      const heroW = W - (2 * pad);
+      const heroH = Math.round(heroW * (heroImg.naturalHeight || 720) / (heroImg.naturalWidth || 1280));
+
+      const hasStrip = loaded.length > 1;
+      const stripH = hasStrip ? 140 : 0;
+      const totalH = pad + headerH + gap + (hasStrip ? stripH + gap : 0) + heroH + pad;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = W;
+      canvas.height = totalH;
+      const ctx = canvas.getContext('2d');
+
+      // Dark background
+      ctx.fillStyle = '#090d16';
+      ctx.fillRect(0, 0, W, totalH);
+
+      // --- Header Box ---
+      ctx.fillStyle = '#1e293b';
+      roundRect(ctx, pad, pad, W - (2 * pad), headerH, 12);
+      ctx.fill();
+      ctx.strokeStyle = '#334155';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Vehicle Name + Org
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 26px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      const vTitle = `${v.name || 'Vehicle'} [${v.organization || 'HEART'}]`;
+      ctx.fillText(vTitle, pad + 20, pad + 44);
+
+      // Driver Name
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '500 17px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      const driverStr = (v.driver && v.driver !== 'Unassigned') ? `Driver: ${v.driver}` : 'Driver: Unassigned';
+      ctx.fillText(driverStr, pad + 20, pad + 80);
+
+      // Motion Status Pill
+      const statusStr = (v.status || 'Active') + (v.speed_mph ? ` · ${v.speed_mph} mph` : '');
+      ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      const sWidth = ctx.measureText(statusStr).width;
+      const badgeX = W - pad - 20 - sWidth - 24;
+      const badgeY = pad + 18;
+
+      const sLower = (v.status || '').toLowerCase();
+      const isMoving = sLower.includes('transit') || sLower.includes('moving');
+      ctx.fillStyle = isMoving ? 'rgba(16, 185, 129, 0.2)' : 'rgba(245, 158, 11, 0.2)';
+      roundRect(ctx, badgeX, badgeY, sWidth + 24, 32, 8);
+      ctx.fill();
+      ctx.strokeStyle = isMoving ? '#10b981' : '#f59e0b';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      ctx.fillStyle = isMoving ? '#34d399' : '#fbbf24';
+      ctx.fillText(statusStr, badgeX + 12, badgeY + 22);
+
+      // Freshness text under badge
+      const tsVal = v.last_refreshed_ts || v.last_refreshed_iso;
+      const timeStr = tsVal ? `Snapshot: ${formatTimeDelta(tsVal)}` : (v.camera_status || '');
+      ctx.fillStyle = '#64748b';
+      ctx.font = '14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      const tWidth = ctx.measureText(timeStr).width;
+      ctx.fillText(timeStr, W - pad - 20 - tWidth, pad + 82);
+
+      let currentY = pad + headerH + gap;
+
+      // --- Thumbnail Strip (if multiple camera angles) ---
+      if (hasStrip) {
+        let thumbX = pad;
+        loaded.forEach((cam) => {
+          const thumbW = Math.round(stripH * (cam.img.naturalWidth || 1280) / (cam.img.naturalHeight || 720));
+          ctx.save();
+          roundRect(ctx, thumbX, currentY, thumbW, stripH, 8);
+          ctx.clip();
+          ctx.drawImage(cam.img, thumbX, currentY, thumbW, stripH);
+          ctx.restore();
+
+          // Border highlight for driver cam
+          ctx.strokeStyle = cam.pos === 'driver' ? '#3b82f6' : '#475569';
+          ctx.lineWidth = cam.pos === 'driver' ? 3 : 1.5;
+          roundRect(ctx, thumbX, currentY, thumbW, stripH, 8);
+          ctx.stroke();
+
+          // Label overlay badge
+          ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, sans-serif';
+          const lw = ctx.measureText(cam.label).width;
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+          roundRect(ctx, thumbX + 6, currentY + 6, lw + 14, 20, 4);
+          ctx.fill();
+          ctx.fillStyle = '#e2e8f0';
+          ctx.fillText(cam.label, thumbX + 13, currentY + 20);
+
+          thumbX += thumbW + gap;
+        });
+        currentY += stripH + gap;
+      }
+
+      // --- Hero Image ---
+      ctx.save();
+      roundRect(ctx, pad, currentY, heroW, heroH, 10);
+      ctx.clip();
+      ctx.drawImage(heroImg, pad, currentY, heroW, heroH);
+      ctx.restore();
+
+      ctx.strokeStyle = '#334155';
+      ctx.lineWidth = 2;
+      roundRect(ctx, pad, currentY, heroW, heroH, 10);
+      ctx.stroke();
+
+      // Hero pill overlay
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+      const heroLabel = heroObj.label;
+      ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, sans-serif';
+      const hlw = ctx.measureText(heroLabel).width;
+      roundRect(ctx, pad + 14, currentY + 14, hlw + 20, 26, 6);
+      ctx.fill();
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillText(heroLabel, pad + 24, currentY + 31);
+
+      return new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    }
+
+    async function copyForWhatsApp(vehicleId) {
+      const v = findVehicleById(vehicleId);
+      if (!v) {
+        showToast("Vehicle not found");
+        return;
+      }
+      showToast(`Creating WhatsApp collage for ${v.name}...`);
+      const text = getWhatsAppText(v);
+
+      try {
+        const imgBlob = await composeWhatsAppImage(v);
+        if (imgBlob && navigator.clipboard && navigator.clipboard.write) {
+          try {
+            await navigator.clipboard.write([
+              new ClipboardItem({
+                'text/plain': new Blob([text], { type: 'text/plain' }),
+                'image/png': imgBlob
+              })
+            ]);
+            showToast(`Copied collage & text for ${v.name}! Paste in WhatsApp.`);
+            return;
+          } catch (clipErr) {
+            console.warn("Combined clipboard item failed, trying image only...", clipErr);
+            try {
+              await navigator.clipboard.write([
+                new ClipboardItem({ 'image/png': imgBlob })
+              ]);
+              showToast(`Copied collage image for ${v.name}!`);
+              return;
+            } catch (imgErr) {
+              console.warn("Image only failed, trying text only...", imgErr);
+            }
+          }
+        }
       } catch (err) {
-        alert("Failed to load violations: " + err.message);
+        console.error("Error composing image:", err);
+      }
+
+      // Text fallback
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast(`Copied text details for ${v.name}! Paste in WhatsApp.`);
+      } catch (e) {
+        showToast("Clipboard copy failed: permission denied.");
       }
     }
 
-    function closeViolationsModal() {
-      document.getElementById('violationsModal').classList.add('hidden');
+    let currentLightboxVehicleId = null;
+    let currentLightboxCamera = 'driver'; // 'driver' | 'road'
+
+    function openLightbox(vehicleId, preferredCam = 'driver') {
+      currentLightboxVehicleId = vehicleId;
+      currentLightboxCamera = preferredCam || 'driver';
+      renderLightbox();
+      document.getElementById('lightboxModal')?.classList.remove('hidden');
     }
 
-    function openImageModal(imgSrc, title) {
-      document.getElementById('modalImage').src = imgSrc;
-      document.getElementById('modalTitle').textContent = title || "Camera Feed Inspection";
-      document.getElementById('imageModal').classList.remove('hidden');
+    function closeLightbox() {
+      document.getElementById('lightboxModal')?.classList.add('hidden');
+      currentLightboxVehicleId = null;
     }
 
-    function closeImageModal() {
-      document.getElementById('imageModal').classList.add('hidden');
+    function navigateLightbox(delta) {
+      const { sorted } = getFilteredAndSortedVehicles();
+      const list = (sorted && sorted.length > 0) ? sorted : getAllVehiclesList();
+      if (!list || !list.length) return;
+      let idx = list.findIndex(v => String(v.id) === String(currentLightboxVehicleId));
+      if (idx < 0) idx = 0;
+      const nextIdx = (idx + delta + list.length) % list.length;
+      currentLightboxVehicleId = list[nextIdx].id;
+      renderLightbox();
     }
+
+    function setLightboxCamera(camKey) {
+      currentLightboxCamera = camKey;
+      renderLightbox();
+    }
+
+    function renderLightbox() {
+      const { sorted } = getFilteredAndSortedVehicles();
+      const list = (sorted && sorted.length > 0) ? sorted : getAllVehiclesList();
+      if (!list || !list.length) return;
+
+      const idx = list.findIndex(v => String(v.id) === String(currentLightboxVehicleId));
+      const v = list[idx >= 0 ? idx : 0];
+      if (!v) return;
+      currentLightboxVehicleId = v.id;
+
+      // Header info
+      const titleEl = document.getElementById('lbTruckTitle');
+      if (titleEl) titleEl.textContent = v.name || 'Vehicle';
+
+      const orgEl = document.getElementById('lbOrgBadge');
+      if (orgEl) {
+        const isHT = (v.organization === 'Houston Towing');
+        orgEl.textContent = isHT ? 'Houston Towing' : 'HEART';
+        orgEl.className = isHT ? 'px-2 py-0.5 rounded-full text-xs font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'px-2 py-0.5 rounded-full text-xs font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30';
+      }
+
+      const driverEl = document.getElementById('lbDriverName');
+      if (driverEl) {
+        const dName = (v.driver && v.driver !== 'Unassigned') ? v.driver : 'Unassigned';
+        driverEl.innerHTML = `<i class="fa-solid fa-user text-slate-500 text-[10px]"></i> ${dName}`;
+      }
+
+      const counterEl = document.getElementById('lbCounter');
+      if (counterEl) {
+        counterEl.textContent = `Truck ${idx >= 0 ? idx + 1 : 1} of ${list.length}`;
+      }
+
+      const motionEl = document.getElementById('lbMotionBadge');
+      if (motionEl) {
+        const s = (v.status || '').toLowerCase();
+        const isMoving = s.includes('transit') || s.includes('moving');
+        motionEl.textContent = `${v.status || 'In service'}${v.speed_mph ? ` (${v.speed_mph} mph)` : ''}`;
+        motionEl.className = `px-2 py-0.5 rounded-full text-xs font-semibold ${isMoving ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-slate-700 text-slate-300 border border-slate-600'}`;
+      }
+
+      const timeEl = document.getElementById('lbTimeBadge');
+      if (timeEl) {
+        const tsVal = v.last_refreshed_ts || v.last_refreshed_iso;
+        if (tsVal) {
+          timeEl.textContent = formatTimeDelta(tsVal);
+          timeEl.className = `px-2 py-0.5 rounded-full text-xs font-bold border ${getTimeDeltaBadgeClass(tsVal)}`;
+        } else {
+          timeEl.textContent = v.camera_status || 'No timestamp';
+          timeEl.className = 'px-2 py-0.5 rounded-full text-xs font-bold border border-slate-600 text-slate-400 bg-slate-800';
+        }
+      }
+
+      // Camera angles
+      const cams = [];
+      if (v.driver_camera_img) cams.push({ key: 'driver', label: 'Driver Cam (Inward)', img: v.driver_camera_img });
+      if (v.road_camera_img) cams.push({ key: 'road', label: 'Road Cam (Outward)', img: v.road_camera_img });
+
+      if (cams.length > 0 && !cams.some(c => c.key === currentLightboxCamera)) {
+        currentLightboxCamera = cams[0].key;
+      }
+
+      const stripEl = document.getElementById('lbCameraStrip');
+      const mainImgEl = document.getElementById('lbMainImg');
+      const emptyEl = document.getElementById('lbEmptyState');
+
+      if (cams.length > 0) {
+        stripEl.innerHTML = cams.map(c => `
+          <button onclick="setLightboxCamera('${c.key}')" class="flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-semibold transition ${c.key === currentLightboxCamera ? 'border-amber-400 bg-amber-500/20 text-amber-300 shadow-md' : 'border-slate-700 bg-slate-800 text-slate-400 hover:border-slate-500 hover:text-white'}">
+            <img src="${c.img}" class="w-8 h-5 object-cover rounded border border-slate-600">
+            <span>${c.label}</span>
+          </button>
+        `).join('');
+
+        const selCam = cams.find(c => c.key === currentLightboxCamera) || cams[0];
+        mainImgEl.src = selCam.img;
+        mainImgEl.classList.remove('hidden');
+        emptyEl.classList.add('hidden');
+      } else {
+        stripEl.innerHTML = `<span class="text-xs text-slate-500 italic">No camera snapshots available</span>`;
+        mainImgEl.classList.add('hidden');
+        emptyEl.classList.remove('hidden');
+      }
+
+      // Bottom actions
+      const motiveLink = document.getElementById('lbMotiveLink');
+      if (motiveLink) {
+        motiveLink.href = v.live_url || v.vehicle_url || `https://app.gomotive.com/en-US/#/fleetview/vehicles/summary/${v.id}`;
+        motiveLink.title = `Open in Motive (${v.organization || 'HEART'})`;
+        motiveLink.onclick = (e) => openInMotive(v.id, e);
+      }
+
+      const refreshBtn = document.getElementById('lbRefreshBtn');
+      if (refreshBtn) {
+        refreshBtn.onclick = async () => {
+          await refreshVehicleCamera(v.id, v.name);
+          renderLightbox();
+        };
+      }
+
+      const waBtn = document.getElementById('lbWhatsAppBtn');
+      if (waBtn) {
+        waBtn.onclick = () => {
+          copyForWhatsApp(v.id);
+        };
+      }
+    }
+
+    // Keyboard navigation for Lightbox
+    document.addEventListener('keydown', (e) => {
+      const modal = document.getElementById('lightboxModal');
+      if (!modal || modal.classList.contains('hidden')) return;
+
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        navigateLightbox(-1);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        navigateLightbox(1);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeLightbox();
+      } else if (e.key === '1') {
+        setLightboxCamera('driver');
+      } else if (e.key === '2') {
+        setLightboxCamera('road');
+      }
+    });
 
     function updateAllTimeDeltas() {
       document.querySelectorAll('[data-timestamp]').forEach(el => {
@@ -1765,7 +2178,19 @@
 
     function updateLiveCards(newData) {
       if (!newData) return;
-      const allList = [...(newData.targets || []), ...(newData.others || [])];
+      const seen = new Set();
+      const allList = [];
+      const rawList = (newData.vehicles && newData.vehicles.length > 0)
+        ? newData.vehicles
+        : [...(newData.targets || []), ...(newData.others || [])];
+      rawList.forEach(v => {
+        if (!v) return;
+        const key = String(v.id || v.numeric_id || v.name || '').trim();
+        if (key && !seen.has(key)) {
+          seen.add(key);
+          allList.push(v);
+        }
+      });
       let needsFullRender = false;
 
       allList.forEach(v => {
@@ -1840,7 +2265,7 @@
         const data = await res.json();
         const motionMap = data.motion || {};
 
-        const allV = vehiclesData.vehicles || [...(vehiclesData.targets || []), ...(vehiclesData.others || [])];
+        const allV = getAllVehiclesList();
         let hasChanges = false;
         allV.forEach(v => {
           const v_id = String(v.id || v.name);
@@ -1866,6 +2291,7 @@
         });
         vehiclesData.targets = allV.filter(v => v.is_target);
         vehiclesData.others = allV.filter(v => !v.is_target);
+        vehiclesData.vehicles = allV;
         updateTargetCountBadge(vehiclesData.targets);
 
         updateFilterCounts();
@@ -1962,7 +2388,6 @@
     });
     // Actively pull motion status every minute (60,000ms)
     setInterval(pullMotionStatus, 60000);
-    updateViolationCount();
   </script>
 </body>
 </html>
