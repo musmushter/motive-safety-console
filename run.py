@@ -31,11 +31,15 @@ def ensure_chrome_profiles_running():
     user_data_dir = config.CHROME_USER_DATA_DIR
 
     if not chrome_exe.exists():
-        local_chrome = Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "Application" / "chrome.exe"
-        if local_chrome.exists():
-            chrome_exe = local_chrome
+        if sys.platform == "win32":
+            local_chrome = Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "Application" / "chrome.exe"
+            if local_chrome.exists():
+                chrome_exe = local_chrome
+            else:
+                print("[!] Warning: Could not locate chrome.exe. Please launch Chrome manually with debugging port 9222.")
+                return
         else:
-            print("[!] Warning: Could not locate chrome.exe. Please launch Chrome manually with debugging port 9222.")
+            print(f"[!] Warning: Could not locate Chrome/Chromium executable at '{chrome_exe}'. Please launch Chrome manually with debugging port 9222.")
             return
 
     cdp_alive = is_chrome_cdp_running()
@@ -45,6 +49,7 @@ def ensure_chrome_profiles_running():
         cmd_profile1 = [
             str(chrome_exe),
             "--remote-debugging-port=9222",
+            "--remote-allow-origins=*",
             f"--user-data-dir={user_data_dir}",
             "--profile-directory=Default",
             config.MOTIVE_URL

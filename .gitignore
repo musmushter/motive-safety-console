@@ -12,6 +12,7 @@ dist/
 .venv/
 venv/
 ENV/
+.env
 
 # Sensitive authentication & browser session data
 data/browser_profile/

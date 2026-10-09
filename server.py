@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Any
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import config
@@ -18,6 +19,14 @@ logger = logging.getLogger("server")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 app = FastAPI(title="Motive Safety Monitoring Console")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Mount snapshots and static files
 app.mount("/snapshots", StaticFiles(directory=str(config.SNAPSHOTS_DIR)), name="snapshots")
@@ -69,7 +78,15 @@ async def serve_index():
     if not index_path.exists():
         return HTMLResponse("<h1>Loading Console...</h1>")
     with open(index_path, "r", encoding="utf-8") as f:
-        return HTMLResponse(f.read())
+        content = f.read()
+    return HTMLResponse(
+        content,
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        }
+    )
 
 @app.get("/api/status")
 async def get_status():
@@ -419,3 +436,15 @@ async def refresh_all_cameras(background_tasks: BackgroundTasks, concurrency: in
         "concurrency": pool_size,
         "message": f"Started refreshing {len(targets)} active vehicles{skip_text} in background."
     }
+
+@app.api_route("/api/stop", methods=["GET", "POST"])
+async def stop_server():
+    """Cleanly stops the console server."""
+    logger.info("Shutdown requested via /api/stop...")
+    async def _shutdown():
+        await asyncio.sleep(0.3)
+        import os
+        os._exit(0)
+    asyncio.create_task(_shutdown())
+    return {"status": "stopping", "message": "Safety Console server is stopping."}
+

@@ -1,4 +1,4 @@
-﻿# Motive Fleet Safety Monitoring Console
+# Motive Fleet Safety Monitoring Console
 
 A custom dispatch safety monitoring dashboard designed for roadside assistance fleet operations. It automates checking driver-facing and road-facing dashcams on **Motive** (`app.gomotive.com`).
 
@@ -26,17 +26,25 @@ A custom dispatch safety monitoring dashboard designed for roadside assistance f
 
 ## How to Run
 
-### Quick Start (Double-Click)
-Double-click `start_console.bat` in this folder.
+### Windows
+- **Quick Start**: Double-click `start_console.bat`.
+- **Command Line**:
+  ```powershell
+  .venv\Scripts\activate
+  python run.py
+  ```
 
-### Command Line
-```powershell
-# Activate venv
-.venv\Scripts\activate
-
-# Run the console
-python run.py
-```
+### Linux
+- **Quick Start**:
+  ```bash
+  ./start_console.sh
+  ```
+- **Stopping the Console on Linux**:
+  - Click the **"Stop Server"** button in the top navigation bar of the web dashboard.
+  - Or run:
+    ```bash
+    ./stop_console.sh
+    ```
 
 Console URL: [http://localhost:8000](http://localhost:8000)
 

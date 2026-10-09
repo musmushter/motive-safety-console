@@ -27,5 +27,25 @@ PORT = 8000
 HOST = "127.0.0.1"
 
 # Chrome configuration for multi-organization monitoring
-CHROME_PATH = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
-CHROME_USER_DATA_DIR = Path(r"C:\Users\musta\fsl_tracker\console_profile")
+import platform
+import shutil
+
+if platform.system() == "Windows":
+    CHROME_PATH = Path(os.environ.get("CHROME_PATH", r"C:\Program Files\Google\Chrome\Application\chrome.exe"))
+    CHROME_USER_DATA_DIR = Path(os.environ.get("CHROME_USER_DATA_DIR", r"C:\Users\musta\fsl_tracker\console_profile"))
+else:
+    # Linux / macOS
+    _detected_chrome = (
+        shutil.which("google-chrome")
+        or shutil.which("google-chrome-stable")
+        or shutil.which("chromium")
+        or shutil.which("chromium-browser")
+        or shutil.which("chrome")
+        or "/usr/bin/chromium"
+    )
+    CHROME_PATH = Path(os.environ.get("CHROME_PATH", _detected_chrome))
+    _default_linux_profile = Path.home() / "Projects" / "fsl_tracker" / "console_profile"
+    if not _default_linux_profile.exists():
+        _default_linux_profile = BROWSER_PROFILE_DIR
+    CHROME_USER_DATA_DIR = Path(os.environ.get("CHROME_USER_DATA_DIR", _default_linux_profile))
+
