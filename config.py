@@ -31,8 +31,17 @@ import platform
 import shutil
 
 if platform.system() == "Windows":
-    CHROME_PATH = Path(os.environ.get("CHROME_PATH", r"C:\Program Files\Google\Chrome\Application\chrome.exe"))
-    CHROME_USER_DATA_DIR = Path(os.environ.get("CHROME_USER_DATA_DIR", r"C:\Users\musta\fsl_tracker\console_profile"))
+    _win_chrome_candidates = [
+        Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+        Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+    ]
+    _detected_win_chrome = next((p for p in _win_chrome_candidates if p.exists()), _win_chrome_candidates[0])
+    CHROME_PATH = Path(os.environ.get("CHROME_PATH", _detected_win_chrome))
+    _default_win_profile = Path.home() / "fsl_tracker" / "console_profile"
+    if not _default_win_profile.exists():
+        _default_win_profile = BROWSER_PROFILE_DIR
+    CHROME_USER_DATA_DIR = Path(os.environ.get("CHROME_USER_DATA_DIR", _default_win_profile))
 else:
     # Linux / macOS
     _detected_chrome = (
