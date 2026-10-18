@@ -1,4 +1,6 @@
 import os
+import platform
+import shutil
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -12,13 +14,6 @@ DATA_DIR.mkdir(exist_ok=True)
 SNAPSHOTS_DIR.mkdir(exist_ok=True)
 BROWSER_PROFILE_DIR.mkdir(exist_ok=True)
 
-# Filtering criteria based on user requirements:
-# 1. Target groups: "HEART" and unassigned/no group
-TARGET_GROUPS = ["HEART", "", None]
-
-# 2. Target vehicle states: In transit and idling
-TARGET_STATUSES = ["in transit", "transit", "moving", "idling", "idle"]
-
 # Motive URL
 MOTIVE_URL = "https://app.gomotive.com/en-US"
 
@@ -27,9 +22,6 @@ PORT = 8000
 HOST = "127.0.0.1"
 
 # Chrome configuration for multi-organization monitoring
-import platform
-import shutil
-
 if platform.system() == "Windows":
     _win_chrome_candidates = [
         Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
@@ -57,4 +49,3 @@ else:
     if not _default_linux_profile.exists():
         _default_linux_profile = BROWSER_PROFILE_DIR
     CHROME_USER_DATA_DIR = Path(os.environ.get("CHROME_USER_DATA_DIR", _default_linux_profile))
-

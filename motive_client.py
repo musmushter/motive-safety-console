@@ -5,88 +5,33 @@ import json
 import logging
 import os
 import re
+import subprocess
 import time
-from pathlib import Path
 from typing import Dict, List, Optional, Any
+
 import httpx
-from playwright.async_api import async_playwright, BrowserContext, Page, Response
+import websockets
 
 import config
 
-def is_live_status(time_text: str) -> bool:
-    if not time_text:
-        return False
-    t = time_text.strip().lower()
-    return t in ("live", "just now", "< 1m ago", "0m ago", "<1m ago")
-
-def parse_motive_time_to_unix(time_text: str) -> int:
-    """
-    Parses Gomotive relative (e.g. '8h 36m ago', '< 1m ago', 'Just now', 'Live')
-    or absolute timestamp strings into a UNIX epoch timestamp in milliseconds.
-    """
-    now_ts = time.time()
-    if not time_text:
-        return int(now_ts * 1000)
-        
-    t = time_text.strip()
-    if is_live_status(t):
-        return int(now_ts * 1000)
-        
-    m = re.search(r"(\d+)\s*d(?:ays?)?\s*(?:(\d+)\s*h(?:rs?|ours?)?)?\s*ago", t, re.IGNORECASE)
-    if m:
-        days = int(m.group(1))
-        hours = int(m.group(2) or 0)
-        return int((now_ts - (days * 86400 + hours * 3600)) * 1000)
-        
-    m = re.search(r"(\d+)\s*h(?:rs?|ours?)?\s*(?:(\d+)\s*m(?:in|ins|inutes?)?)?\s*ago", t, re.IGNORECASE)
-    if m:
-        hours = int(m.group(1))
-        mins = int(m.group(2) or 0)
-        return int((now_ts - (hours * 3600 + mins * 60)) * 1000)
-        
-    m = re.search(r"(\d+)\s*h(?:rs?|ours?)?\s*ago", t, re.IGNORECASE)
-    if m:
-        hours = int(m.group(1))
-        return int((now_ts - (hours * 3600)) * 1000)
-        
-    m = re.search(r"(\d+)\s*m(?:in|ins|inutes?)?\s*ago", t, re.IGNORECASE)
-    if m:
-        mins = int(m.group(1))
-        return int((now_ts - (mins * 60)) * 1000)
-        
-    m = re.search(r"(\d+)\s*s(?:ec|ecs|econds?)?\s*ago", t, re.IGNORECASE)
-    if m:
-        secs = int(m.group(1))
-        return int((now_ts - secs) * 1000)
-        
-    try:
-        dt = datetime.datetime.strptime(t, "%m/%d/%Y %I:%M %p")
-        return int(dt.timestamp() * 1000)
-    except Exception:
-        pass
-        
-    return int(now_ts * 1000)
-
-def parse_motive_time_to_iso(time_text: str) -> str:
-    """Parses Gomotive relative or absolute timestamp into ISO string."""
-    ms = parse_motive_time_to_unix(time_text)
-    return datetime.datetime.fromtimestamp(ms / 1000.0).isoformat()
-
 logger = logging.getLogger("motive_client")
+
+GROUP_MAP = {
+    248703: "HEART",
+    248702: "ALL AMERICAN",
+    248708: "BMW",
+    266920: "HOUSTON TOWING",
+}
+
 
 class MotiveClient:
     def __init__(self, headless: bool = False):
         self.headless = headless
-        self.playwright = None
-        self.context: Optional[BrowserContext] = None
-        self.page: Optional[Page] = None
         self.is_cdp: bool = False
-        self.cdp_session = None
         self.cached_vehicles: List[Dict[str, Any]] = []
         self.is_busy: bool = False
         self.current_status: str = "Idle"
         self._lock = asyncio.Lock()
-        self._claimed_pages = set()
         self.driver_mappings: Dict[str, Dict[str, Any]] = {}
         self.offline_vehicle_ids: set = set()
         self.offline_reasons: Dict[str, str] = {}
@@ -185,20 +130,22 @@ class MotiveClient:
         is_idle = (mot_cat == "idle" or any(k in status_low for k in ["idle", "idling"]))
         is_stationary = not is_transit and not is_idle
 
-        motion_match = False
-        if "transit" in motions and is_transit:
-            motion_match = True
-        if "idle" in motions and is_idle:
-            motion_match = True
-        if "stationary" in motions and is_stationary:
-            motion_match = True
+        motion_match = (
+            ("transit" in motions and is_transit)
+            or ("idle" in motions and is_idle)
+            or ("stationary" in motions and is_stationary)
+        )
         if not motion_match:
             return False
 
         if cfg.get("require_camera", True) and not v.get("has_camera"):
             return False
 
-        if cfg.get("exclude_offline", True) and (v.get("is_offline") or self.is_vehicle_offline(v.get("id")) or self.is_vehicle_offline(v.get("name"))):
+        if cfg.get("exclude_offline", True) and (
+            v.get("is_offline")
+            or self.is_vehicle_offline(v.get("id"))
+            or self.is_vehicle_offline(v.get("name"))
+        ):
             return False
 
         return True
@@ -228,7 +175,11 @@ class MotiveClient:
         auth_file = config.DATA_DIR / "motive_auth.json"
         try:
             with open(auth_file, "w", encoding="utf-8") as f:
-                json.dump({"token": token, "company_name": "HOUSTON EMERGENCY AUTO RESCUE & TRUCKING LLC", "company_id": "260129"}, f, indent=2)
+                json.dump({
+                    "token": token,
+                    "company_name": "HOUSTON EMERGENCY AUTO RESCUE & TRUCKING LLC",
+                    "company_id": "260129"
+                }, f, indent=2)
         except Exception:
             pass
 
@@ -253,11 +204,15 @@ class MotiveClient:
         auth_file = config.DATA_DIR / "motive_org2_auth.json"
         try:
             with open(auth_file, "w", encoding="utf-8") as f:
-                json.dump({"token": token, "company_name": "Houston Towing & Transportation LLC.", "company_id": "599530"}, f, indent=2)
+                json.dump({
+                    "token": token,
+                    "company_name": "Houston Towing & Transportation LLC.",
+                    "company_id": "599530"
+                }, f, indent=2)
         except Exception:
             pass
 
-    def get_token_for_vehicle(self, v: Optional[Dict[str, Any]]) -> str:
+    def get_token_for_vehicle(self, v: Optional[Dict[str, Any]]) -> Optional[str]:
         if v and (v.get("organization") == "Houston Towing" or str(v.get("org_id")) == "599530"):
             return self.org2_token or self._load_org2_auth_token() or (self.web_user_auth_token or self._load_auth_token())
         return self.web_user_auth_token or self._load_auth_token()
@@ -275,7 +230,6 @@ class MotiveClient:
                     return synced
                 targets = [t for t in r.json() if t.get("type") == "page" and "gomotive.com" in t.get("url", "")]
 
-            import websockets
             for t in targets:
                 ws_url = t.get("webSocketDebuggerUrl")
                 if not ws_url:
@@ -288,7 +242,6 @@ class MotiveClient:
                         auth_token = cookies.get("auth_token")
                         user_id = str(cookies.get("user_id") or "").strip()
                         if auth_token:
-                            # If user_id is ambiguous, authoritatively validate via Motive sessions endpoint
                             if user_id not in ("9991540", "9991660"):
                                 try:
                                     async with httpx.AsyncClient(timeout=4.0) as val_client:
@@ -301,7 +254,6 @@ class MotiveClient:
                                 except Exception as val_e:
                                     logger.debug(f"Session validate failed during CDP token sync: {val_e}")
 
-                            # Route strictly by validated user_id and safeguard against cross-token overwrite
                             current_heart = self.web_user_auth_token or self._load_auth_token()
                             current_ht = self.org2_token or self._load_org2_auth_token()
 
@@ -336,16 +288,14 @@ class MotiveClient:
         - Houston Towing -> Profile 'Profile 1' (user_id 9991660)
         Brings the target Chrome window and tab directly to the front.
         """
-        import subprocess
         s_vid = str(vehicle_id).strip()
         v = next((x for x in self.cached_vehicles if str(x.get("id")) == s_vid or str(x.get("numeric_id")) == s_vid or x.get("name") == s_vid), None)
-        
+
         is_ht = v and (v.get("organization") == "Houston Towing" or str(v.get("org_id")) == "599530")
         target_uid = "9991660" if is_ht else "9991540"
         profile_name = "Profile 1" if is_ht else "Default"
         org_name = "Houston Towing" if is_ht else "HEART"
 
-        # Build live vehicle URL
         num_id = v.get("numeric_id") or v.get("id") if v else s_vid
         target_url = v.get("live_url") or v.get("vehicle_url") if v else None
         if not target_url and num_id:
@@ -357,7 +307,6 @@ class MotiveClient:
 
         # 1. Try navigating an existing Motive tab via CDP
         try:
-            import websockets
             async with httpx.AsyncClient(timeout=3.0) as http_client:
                 r = await http_client.get("http://127.0.0.1:9222/json")
                 if r.status_code == 200:
@@ -372,7 +321,6 @@ class MotiveClient:
                                 resp = json.loads(await ws.recv())
                                 cookies = {c["name"]: c["value"] for c in resp.get("result", {}).get("cookies", [])}
                                 if cookies.get("user_id") == target_uid:
-                                    # Navigate and bring to front
                                     await ws.send(json.dumps({
                                         "id": 2,
                                         "method": "Runtime.evaluate",
@@ -425,22 +373,17 @@ class MotiveClient:
                 "profile": profile_name
             }
 
-    async def fetch_live_motion_statuses(self) -> Dict[str, Dict[str, Any]]:
-        """
-        Actively queries Motive API for real-time motion and driver status for all vehicles
-        across both organizations (HEART and Houston Towing) in parallel via async HTTPX.
-        Executes in <1 second with the active session tokens.
-        """
+    async def _fetch_motive_vehicles_api(self, timeout: float = 20.0) -> List[Dict[str, Any]]:
+        """Queries Motive's REST API in parallel across HEART and Houston Towing organizations."""
         token_heart = self.web_user_auth_token or self._load_auth_token()
         token_ht = self.org2_token or self._load_org2_auth_token()
 
         if token_heart and token_ht and token_heart == token_ht:
-            logger.error("HEART and Houston Towing tokens are IDENTICAL during motion fetch! Skipping HT query to prevent duplicate records.")
+            logger.error("HEART and Houston Towing tokens are IDENTICAL! Skipping duplicate org query.")
             token_ht = None
 
         if not token_heart and not token_ht:
-            logger.warning("No x-web-user-auth tokens available for live motion query.")
-            return {}
+            return []
 
         async def _fetch_org(client: httpx.AsyncClient, token: Optional[str], org_name: str, org_id: str):
             if not token:
@@ -453,112 +396,120 @@ class MotiveClient:
                     "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                 })
                 if resp.status_code == 200:
-                    data = resp.json()
-                    vehs = data.get("vehicles", [])
+                    vehs = resp.json().get("vehicles", [])
                     for av in vehs:
                         av["_org_name"] = org_name
                         av["_org_id"] = org_id
                     return vehs
-                else:
-                    logger.warning(f"Motive motion API for {org_name} returned status {resp.status_code}")
+                logger.warning(f"Motive API for {org_name} returned status {resp.status_code}")
             except Exception as e:
-                logger.warning(f"Error querying Motive live motion for {org_name}: {e}")
+                logger.warning(f"Error querying Motive API for {org_name}: {e}")
             return []
 
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            res_heart, res_ht = await asyncio.gather(
+                _fetch_org(client, token_heart, "HEART", "260129"),
+                _fetch_org(client, token_ht, "Houston Towing", "599530")
+            )
+            return res_heart + res_ht
+
+    async def fetch_live_motion_statuses(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Actively queries Motive API for real-time motion and driver status for all vehicles
+        across both organizations (HEART and Houston Towing) in parallel via async HTTPX.
+        """
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                res_heart, res_ht = await asyncio.gather(
-                    _fetch_org(client, token_heart, "HEART", "260129"),
-                    _fetch_org(client, token_ht, "Houston Towing", "599530")
-                )
-                api_vehicles = res_heart + res_ht
+            api_vehicles = await self._fetch_motive_vehicles_api(timeout=15.0)
+            if not api_vehicles:
+                return {}
 
-                motion_map: Dict[str, Dict[str, Any]] = {}
-                seen_motion_ids = set()
-                for av in api_vehicles:
-                    v_id = str(av.get("id"))
-                    if not v_id or v_id in seen_motion_ids:
-                        continue
-                    seen_motion_ids.add(v_id)
-                    v_num = av.get("number")
-                    state_obj = av.get("current_state") or {}
-                    raw_state = (state_obj.get("entity_state") or "stationary").lower()
-                    speed_kph = state_obj.get("ground_speed_kph")
-                    speed_mph = round(speed_kph * 0.621371, 1) if (speed_kph is not None and speed_kph > 0) else 0
+            motion_map: Dict[str, Dict[str, Any]] = {}
+            seen_motion_ids = set()
+            for av in api_vehicles:
+                v_id = str(av.get("id"))
+                if not v_id or v_id in seen_motion_ids:
+                    continue
+                seen_motion_ids.add(v_id)
+                v_num = av.get("number")
+                state_obj = av.get("current_state") or {}
+                raw_state = (state_obj.get("entity_state") or "stationary").lower()
+                speed_kph = state_obj.get("ground_speed_kph")
+                speed_mph = round(speed_kph * 0.621371, 1) if (speed_kph is not None and speed_kph > 0) else 0
 
-                    if raw_state in ["driving", "in_transit", "moving"] or speed_mph > 2.0:
-                        motion_category = "transit"
-                        status_label = f"In Transit ({speed_mph} mph)" if speed_mph > 0 else "In Transit"
-                    elif raw_state in ["idling", "idle"]:
-                        motion_category = "idle"
-                        status_label = "Idling"
-                    else:
-                        motion_category = "stationary"
-                        status_label = "Stationary"
+                if raw_state in ["driving", "in_transit", "moving"] or speed_mph > 2.0:
+                    motion_category = "transit"
+                    status_label = f"In Transit ({speed_mph} mph)" if speed_mph > 0 else "In Transit"
+                elif raw_state in ["idling", "idle"]:
+                    motion_category = "idle"
+                    status_label = "Idling"
+                else:
+                    motion_category = "stationary"
+                    status_label = "Stationary"
 
-                    driver_obj = av.get("current_driver")
-                    driver_name = None
-                    if driver_obj and isinstance(driver_obj, dict):
-                        fn = driver_obj.get("first_name", "")
-                        ln = driver_obj.get("last_name", "")
-                        d_full = f"{fn} {ln}".strip()
-                        if d_full:
-                            driver_name = d_full
+                driver_obj = av.get("current_driver")
+                driver_name = None
+                if driver_obj and isinstance(driver_obj, dict):
+                    fn = driver_obj.get("first_name", "")
+                    ln = driver_obj.get("last_name", "")
+                    d_full = f"{fn} {ln}".strip()
+                    if d_full:
+                        driver_name = d_full
 
-                    info = {
-                        "id": v_id,
-                        "name": v_num,
-                        "organization": av.get("_org_name", "HEART"),
-                        "org_id": av.get("_org_id", "260129"),
-                        "motion_category": motion_category,
-                        "status_label": status_label,
-                        "raw_state": raw_state,
-                        "speed_mph": speed_mph,
-                        "driver_name": driver_name,
-                        "located_at": av.get("current_location", {}).get("located_at"),
-                        "last_updated": state_obj.get("entity_state_last_updated") or datetime.datetime.now().isoformat()
-                    }
-                    motion_map[v_id] = info
-                    if v_num:
-                        motion_map[v_num] = info
+                info = {
+                    "id": v_id,
+                    "name": v_num,
+                    "organization": av.get("_org_name", "HEART"),
+                    "org_id": av.get("_org_id", "260129"),
+                    "motion_category": motion_category,
+                    "status_label": status_label,
+                    "raw_state": raw_state,
+                    "speed_mph": speed_mph,
+                    "driver_name": driver_name,
+                    "located_at": av.get("current_location", {}).get("located_at"),
+                    "last_updated": state_obj.get("entity_state_last_updated") or datetime.datetime.now().isoformat()
+                }
+                motion_map[v_id] = info
+                if v_num:
+                    motion_map[v_num] = info
 
-                    dash_info = av.get("dashcam_info") or {}
-                    if dash_info.get("health_sub_status_key") == "vg_powered_off":
-                        if not self.is_vehicle_offline(v_id):
-                            self.flag_offline_vehicle(v_id, "Dashcam powered off (reported by Motive)")
-                        if v_num and not self.is_vehicle_offline(v_num):
-                            self.flag_offline_vehicle(v_num, "Dashcam powered off (reported by Motive)")
+                dash_info = av.get("dashcam_info") or {}
+                if dash_info.get("health_sub_status_key") == "vg_powered_off":
+                    if not self.is_vehicle_offline(v_id):
+                        self.flag_offline_vehicle(v_id, "Dashcam powered off (reported by Motive)")
+                    if v_num and not self.is_vehicle_offline(v_num):
+                        self.flag_offline_vehicle(v_num, "Dashcam powered off (reported by Motive)")
 
-                # Update in-memory cached_vehicles
-                transit_cnt = 0
-                idle_cnt = 0
-                for cv in self.cached_vehicles:
-                    c_id = str(cv.get("id"))
-                    c_name = str(cv.get("name"))
-                    m_info = motion_map.get(c_id) or motion_map.get(c_name)
-                    if m_info:
-                        cv["status"] = m_info["status_label"]
-                        cv["motion_category"] = m_info["motion_category"]
-                        cv["speed_mph"] = m_info["speed_mph"]
-                        cv["last_motion_update"] = m_info["last_updated"]
-                        if m_info.get("organization"):
-                            cv["organization"] = m_info["organization"]
-                            cv["org_id"] = m_info.get("org_id")
-                        if m_info["driver_name"]:
-                            cv["driver"] = m_info["driver_name"]
+            transit_cnt = 0
+            idle_cnt = 0
+            for cv in self.cached_vehicles:
+                c_id = str(cv.get("id"))
+                c_name = str(cv.get("name"))
+                m_info = motion_map.get(c_id) or motion_map.get(c_name)
+                if m_info:
+                    cv["status"] = m_info["status_label"]
+                    cv["motion_category"] = m_info["motion_category"]
+                    cv["speed_mph"] = m_info["speed_mph"]
+                    cv["last_motion_update"] = m_info["last_updated"]
+                    if m_info.get("organization"):
+                        cv["organization"] = m_info["organization"]
+                        cv["org_id"] = m_info.get("org_id")
+                    if m_info["driver_name"]:
+                        cv["driver"] = m_info["driver_name"]
+                    if not cv.get("group"):
+                        cv["group"] = "Unassigned"
 
-                        if not cv.get("group"):
-                            cv["group"] = "Unassigned"
+                    if m_info["motion_category"] == "transit":
+                        transit_cnt += 1
+                    elif m_info["motion_category"] == "idle":
+                        idle_cnt += 1
 
-                        if m_info["motion_category"] == "transit":
-                            transit_cnt += 1
-                        elif m_info["motion_category"] == "idle":
-                            idle_cnt += 1
-
-                self.recalculate_targets()
-                self.last_motion_pull_ts = time.time()
-                logger.info(f"Live motion update: {transit_cnt} in transit, {idle_cnt} idling, {len(self.cached_vehicles) - transit_cnt - idle_cnt} stationary across {len(self.cached_vehicles)} total vehicles.")
-                return motion_map
+            self.recalculate_targets()
+            self.last_motion_pull_ts = time.time()
+            logger.info(
+                f"Live motion update: {transit_cnt} in transit, {idle_cnt} idling, "
+                f"{len(self.cached_vehicles) - transit_cnt - idle_cnt} stationary across {len(self.cached_vehicles)} total vehicles."
+            )
+            return motion_map
         except Exception as e:
             logger.warning(f"Error querying Motive live motion: {e}")
             return {}
@@ -698,63 +649,8 @@ class MotiveClient:
             try:
                 with open(mappings_file, "r", encoding="utf-8") as f:
                     self.driver_mappings = json.load(f)
-                    logger.info(f"Loaded {len(self.driver_mappings)} local driver mappings from file.")
             except Exception as e:
                 logger.warning(f"Failed to load local driver mappings: {e}")
-
-    async def fetch_driver_mappings(self) -> Dict[str, Any]:
-        """Fetches driver name to Gomotive driver summary URL mappings from #/fleetview/list/drivers."""
-        try:
-            if not self.context:
-                await self.initialize()
-
-            driver_tab = await self.context.new_page()
-            try:
-                await driver_tab.goto("https://app.gomotive.com/en-US/#/fleetview/list/drivers", timeout=15000)
-                try:
-                    await driver_tab.wait_for_selector("table tbody tr td", timeout=8000)
-                except Exception:
-                    pass
-                await asyncio.sleep(2)
-
-                mapping = await driver_tab.evaluate(r"""() => {
-                    const rows = Array.from(document.querySelectorAll('table tbody tr'));
-                    const map = {};
-                    for (const r of rows) {
-                        const cells = Array.from(r.querySelectorAll('td'));
-                        if (cells.length < 3) continue;
-                        const dLink = cells[1]?.querySelector('a');
-                        const vLink = cells[2]?.querySelector('a');
-                        if (dLink) {
-                            const dName = dLink.innerText.trim();
-                            const dHref = dLink.href;
-                            const vName = vLink ? vLink.innerText.trim() : null;
-                            let vHref = vLink ? vLink.href : null;
-                            if (vHref && vHref.includes('/vehicles/summary/')) {
-                                const vm = vHref.match(/\/vehicles\/summary\/(\d+)/);
-                                if (vm) vHref = `https://app.gomotive.com/en-US/#/fleetview/map/vehicle/${vm[1]}-null-null/${vm[1]}/live`;
-                            }
-                            if (dName && dHref) {
-                                map[dName] = { driver_name: dName, driver_url: dHref, vehicle_name: vName, vehicle_url: vHref };
-                            }
-                        }
-                    }
-                    return map;
-                }""")
-                if mapping:
-                    self.driver_mappings.update(mapping)
-                    mappings_file = config.DATA_DIR / "driver_mappings.json"
-                    try:
-                        with open(mappings_file, "w", encoding="utf-8") as f:
-                            json.dump(self.driver_mappings, f, indent=2)
-                    except Exception:
-                        pass
-                    logger.info(f"Fetched and updated {len(mapping)} driver mappings from Motive.")
-            finally:
-                await driver_tab.close()
-        except Exception as e:
-            logger.warning(f"Could not load driver mappings from Motive: {e}")
-        return self.driver_mappings
 
     def get_driver_for_vehicle(self, v_num: str, v_id: Optional[str] = None) -> str:
         """Finds driver name from loaded driver mappings if available."""
@@ -766,148 +662,78 @@ class MotiveClient:
         return "Unassigned"
 
     async def initialize(self):
-        """Connects to active Google Chrome over Remote Debugging (port 9222)."""
-        if self.context:
-            return
-
-        self.playwright = await async_playwright().start()
-        cdp_url = "http://127.0.0.1:9222"
+        """Synchronizes authentication tokens from active Chrome CDP session and fetches initial status."""
         try:
-            logger.info(f"Connecting to Chrome via CDP at {cdp_url}...")
-            browser = await self.playwright.chromium.connect_over_cdp(cdp_url)
-            self.context = browser.contexts[0]
-            self.is_cdp = True
-            try:
-                self.cdp_session = await browser.new_browser_cdp_session()
-            except Exception as e:
-                logger.warning(f"Could not create browser CDP session: {e}")
-            logger.info("Successfully connected to active Google Chrome!")
-            try:
-                await self.sync_tokens_from_cdp()
-            except Exception as e:
-                logger.warning(f"Error during initial CDP token sync: {e}")
-            def _on_req(req):
-                auth_hdr = req.headers.get("x-web-user-auth")
-                if auth_hdr and auth_hdr != self.web_user_auth_token and auth_hdr != self.org2_token:
-                    asyncio.create_task(self.sync_tokens_from_cdp())
-            try:
-                self.context.on("request", _on_req)
-            except Exception:
-                pass
-            await self._find_or_open_motive_page()
-            # Perform initial motion status fetch
-            asyncio.create_task(self.fetch_live_motion_statuses())
-            return
+            await self.sync_tokens_from_cdp()
         except Exception as e:
-            logger.warning(f"CDP connection failed ({e}). Falling back to standalone Chrome.")
-
-        args = [
-            "--disable-blink-features=AutomationControlled",
-            "--no-sandbox",
-            "--disable-infobars",
-            "--start-maximized"
-        ]
-        self.context = await self.playwright.chromium.launch_persistent_context(
-            user_data_dir=str(config.BROWSER_PROFILE_DIR),
-            channel="chrome",
-            headless=self.headless,
-            viewport=None,
-            ignore_default_args=["--enable-automation"],
-            args=args,
-            accept_downloads=True
-        )
-        self.is_cdp = False
-        await self.context.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
-        pages = self.context.pages
-        self.page = pages[0] if pages else await self.context.new_page()
-
-    async def _find_or_open_motive_page(self) -> Page:
-        """Locates the active Motive tab in your Chrome."""
-        if not self.context:
-            await self.initialize()
-
-        for p in self.context.pages:
-            try:
-                if "gomotive.com" in p.url:
-                    self.page = p
-                    return self.page
-            except Exception:
-                pass
-
-        logger.info("Opening Motive tab in your Chrome...")
-        self.page = await self.context.new_page()
-        await self.page.goto(config.MOTIVE_URL, wait_until="domcontentloaded")
-        return self.page
+            logger.warning(f"Error during initial CDP token sync: {e}")
+        asyncio.create_task(self.fetch_live_motion_statuses())
 
     def _is_login_url(self, url: str) -> bool:
         url_lower = url.lower()
         return any(term in url_lower for term in [
-            "log-in", "login", "sign-in", "signin", 
+            "log-in", "login", "sign-in", "signin",
             "account.gomotive.com", "session_expired"
         ])
 
     async def check_login_status(self) -> Dict[str, Any]:
-        await self._find_or_open_motive_page()
-        if not self.page:
-            return {"logged_in": False, "url": "", "is_cdp": self.is_cdp, "message": "No Motive tab"}
+        """Checks Chrome CDP (port 9222) and local auth tokens to determine Motive session status."""
+        await self.sync_tokens_from_cdp()
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                r = await client.get("http://127.0.0.1:9222/json")
+                if r.status_code == 200:
+                    self.is_cdp = True
+                    pages = [t for t in r.json() if t.get("type") == "page" and "gomotive.com" in t.get("url", "")]
+                    if pages:
+                        for p in pages:
+                            u = p.get("url", "")
+                            if not self._is_login_url(u):
+                                return {"logged_in": True, "url": u, "is_cdp": True, "message": "Connected"}
+                        first_url = pages[0].get("url", "")
+                        return {"logged_in": False, "url": first_url, "is_cdp": True, "message": "Login required"}
+        except Exception:
+            self.is_cdp = False
 
-        current_url = self.page.url
-        if self._is_login_url(current_url):
-            return {"logged_in": False, "url": current_url, "is_cdp": self.is_cdp, "message": "Login required"}
-        if "gomotive.com" in current_url:
-            return {"logged_in": True, "url": current_url, "is_cdp": self.is_cdp, "message": "Connected"}
-
-        return {"logged_in": False, "url": current_url, "is_cdp": self.is_cdp, "message": "Navigate to Motive"}
+        has_token = bool(self.web_user_auth_token or self.org2_token)
+        return {
+            "logged_in": has_token,
+            "url": config.MOTIVE_URL if has_token else "",
+            "is_cdp": self.is_cdp,
+            "message": "Connected (cached token)" if has_token else "No Motive tab"
+        }
 
     async def open_login_page(self):
-        await self._find_or_open_motive_page()
-        if self.page:
-            await self.page.bring_to_front()
-
-    async def ensure_heart_group_selected(self) -> bool:
-        """Ensures that the Motive dashboard group filter is set to HEART."""
+        """Brings an open Motive tab to the front via CDP, or launches Chrome to the Motive login page."""
         try:
-            current_label = await self.page.evaluate("""() => {
-                const l = document.querySelector('.group-filter-custom-label, [data-testid="page-title-container"]');
-                return l ? l.innerText.trim() : '';
-            }""")
-            if "HEART" in current_label and "All Groups" not in current_label:
-                logger.info(f"Motive group filter is already set to HEART ({current_label.replace(chr(10), ' ')}).")
-                return True
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                r = await client.get("http://127.0.0.1:9222/json")
+                if r.status_code == 200:
+                    pages = [t for t in r.json() if t.get("type") == "page" and "gomotive.com" in t.get("url", "")]
+                    if pages and pages[0].get("webSocketDebuggerUrl"):
+                        async with websockets.connect(pages[0]["webSocketDebuggerUrl"], close_timeout=2) as ws:
+                            await ws.send(json.dumps({"id": 1, "method": "Page.bringToFront"}))
+                            await ws.recv()
+                            return
+        except Exception:
+            pass
 
-            logger.info("Setting Motive group filter to HEART...")
-            await self.page.evaluate("""() => {
-                const trigger = document.querySelector('global-groups-multi-select-filter .dropdown-trigger, .group-filter-custom-label');
-                if (trigger) trigger.click();
-            }""")
-            await asyncio.sleep(1)
-
-            clicked = await self.page.evaluate("""() => {
-                const items = Array.from(document.querySelectorAll('.cdk-overlay-container phx-select-item, .phx-dropdown phx-select-item, [role="menuitem"], [role="option"]'));
-                const heart = items.find(i => i.innerText.trim() === 'HEART');
-                if (heart) {
-                    heart.click();
-                    return true;
-                }
-                return false;
-            }""")
-            if clicked:
-                await asyncio.sleep(3)
-                logger.info("Successfully switched Motive group filter to HEART.")
-                return True
-            else:
-                logger.warning("Could not find HEART in group dropdown.")
-                return False
+        try:
+            subprocess.Popen([
+                str(config.CHROME_PATH),
+                "--remote-debugging-port=9222",
+                "--remote-allow-origins=*",
+                f"--user-data-dir={config.CHROME_USER_DATA_DIR}",
+                "--profile-directory=Default",
+                config.MOTIVE_URL
+            ])
         except Exception as e:
-            logger.warning(f"Error selecting HEART group filter: {e}")
-            return False
+            logger.error(f"Failed to launch Chrome for login: {e}")
 
     async def fetch_vehicles_list(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
         """
         Scans Motive Fleet across all associations (HEART, ALL AMERICAN, BMW, HOUSTON TOWING, and Unassigned).
-        Uses Motive's JSON API for instantaneous (<1s), 100% accurate synchronization without DOM scraping bugs.
-        Assigns each vehicle and driver their verified association.
-        Preserves previously captured camera snapshots and offline states.
+        Uses Motive's JSON API for instantaneous synchronization.
         """
         if not force_refresh and self.cached_vehicles:
             return self.cached_vehicles
@@ -919,178 +745,124 @@ class MotiveClient:
                 prev_cache = {str(v.get("id")): v for v in self.cached_vehicles}
                 prev_cache.update({str(v.get("name")): v for v in self.cached_vehicles if v.get("name")})
 
-                token_heart = self.web_user_auth_token or self._load_auth_token()
-                token_ht = self.org2_token or self._load_org2_auth_token()
-                GROUP_MAP = {
-                    248703: "HEART",
-                    248702: "ALL AMERICAN",
-                    248708: "BMW",
-                    266920: "HOUSTON TOWING",
-                }
+                await self.sync_tokens_from_cdp()
+                api_vehicles = await self._fetch_motive_vehicles_api(timeout=25.0)
 
-                api_success = False
-                extracted: List[Dict[str, Any]] = []
+                if api_vehicles:
+                    extracted: List[Dict[str, Any]] = []
+                    seen_vehicle_keys = set()
+                    for av in api_vehicles:
+                        numeric_id = str(av.get("id"))
+                        if not numeric_id or numeric_id in seen_vehicle_keys:
+                            continue
+                        seen_vehicle_keys.add(numeric_id)
 
-                if token_heart or token_ht:
-                    try:
-                        async def _fetch_org(http_client: httpx.AsyncClient, token: Optional[str], org_name: str, org_id: str):
-                            if not token:
-                                return []
-                            url = "https://api.keeptruckin.com/api/w3/vehicles?per_page=100&page_no=1&sort_field=number&sort_direction=asc&status=active"
-                            try:
-                                resp = await http_client.get(url, headers={
-                                    "accept": "application/json, text/plain, */*",
-                                    "x-web-user-auth": token,
-                                    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                                })
-                                if resp.status_code == 200:
-                                    data = resp.json()
-                                    vehs = data.get("vehicles", [])
-                                    for av in vehs:
-                                        av["_org_name"] = org_name
-                                        av["_org_id"] = org_id
-                                    return vehs
-                                else:
-                                    logger.warning(f"Motive API sync for {org_name} returned status {resp.status_code}")
-                            except Exception as e:
-                                logger.warning(f"Error fetching Motive fleet for {org_name}: {e}")
-                            return []
+                        v_num = av.get("number") or str(numeric_id)
+                        make = (av.get("make") or "").strip()
+                        model = (av.get("model") or "").strip()
+                        year = str(av.get("year") or "").strip()
+                        v_mmy = f"{make} {model} {year}".strip()
 
-                        if token_heart and token_ht and token_heart == token_ht:
-                            logger.error("HEART and Houston Towing tokens are IDENTICAL! Refusing dual fetch to prevent vehicle duplication.")
-                            token_ht = None
+                        org_name = av.get("_org_name", "HEART")
+                        org_id = av.get("_org_id", "260129")
 
-                        async with httpx.AsyncClient(timeout=25.0) as http_client:
-                            res_heart, res_ht = await asyncio.gather(
-                                _fetch_org(http_client, token_heart, "HEART", "260129"),
-                                _fetch_org(http_client, token_ht, "Houston Towing", "599530")
-                            )
-                            api_vehicles = res_heart + res_ht
-                            logger.info(f"Motive API returned {len(res_heart)} HEART and {len(res_ht)} Houston Towing vehicles ({len(api_vehicles)} total).")
+                        g_ids = av.get("group_ids") or []
+                        grp_name = "Unassigned"
+                        for gid in g_ids:
+                            if gid in GROUP_MAP:
+                                grp_name = GROUP_MAP[gid]
+                                break
 
-                            seen_vehicle_keys = set()
-                            for av in api_vehicles:
-                                numeric_id = str(av.get("id"))
-                                if not numeric_id or numeric_id in seen_vehicle_keys:
-                                    logger.warning(f"Skipping duplicate vehicle id {numeric_id}")
-                                    continue
-                                seen_vehicle_keys.add(numeric_id)
+                        driver_name = "Unassigned"
+                        driver_obj = av.get("current_driver")
+                        if driver_obj and isinstance(driver_obj, dict):
+                            fn = driver_obj.get("first_name", "")
+                            ln = driver_obj.get("last_name", "")
+                            d_full = f"{fn} {ln}".strip()
+                            if d_full:
+                                driver_name = d_full
+                        if driver_name == "Unassigned":
+                            driver_name = self.get_driver_for_vehicle(v_num, numeric_id)
 
-                                v_num = av.get("number") or str(numeric_id)
-                                make = (av.get("make") or "").strip()
-                                model = (av.get("model") or "").strip()
-                                year = str(av.get("year") or "").strip()
-                                v_mmy = f"{make} {model} {year}".strip()
+                        state_obj = av.get("current_state") or {}
+                        raw_state = (state_obj.get("entity_state") or "stationary").lower()
+                        speed_kph = state_obj.get("ground_speed_kph")
+                        speed_mph = round(speed_kph * 0.621371, 1) if (speed_kph is not None and speed_kph > 0) else 0
 
-                                org_name = av.get("_org_name", "HEART")
-                                org_id = av.get("_org_id", "260129")
+                        if raw_state in ["driving", "in_transit", "moving"] or speed_mph > 2.0:
+                            motion_category = "transit"
+                            status_label = f"In Transit ({speed_mph} mph)" if speed_mph > 0 else "In Transit"
+                        elif raw_state in ["idling", "idle"]:
+                            motion_category = "idle"
+                            status_label = "Idling"
+                        else:
+                            motion_category = "stationary"
+                            status_label = "Stationary"
 
-                                # Map association group from Motive group_ids
-                                g_ids = av.get("group_ids") or []
-                                grp_name = "Unassigned"
-                                for gid in g_ids:
-                                    if gid in GROUP_MAP:
-                                        grp_name = GROUP_MAP[gid]
-                                        break
+                        dash_info = av.get("dashcam_info") or {}
+                        has_camera = bool(av.get("camera") or dash_info)
+                        health_sub = dash_info.get("health_sub_status_key") or ""
+                        health_status = dash_info.get("health_status_key") or ""
 
-                                # Driver resolution
-                                driver_name = "Unassigned"
-                                driver_obj = av.get("current_driver")
-                                if driver_obj and isinstance(driver_obj, dict):
-                                    fn = driver_obj.get("first_name", "")
-                                    ln = driver_obj.get("last_name", "")
-                                    d_full = f"{fn} {ln}".strip()
-                                    if d_full:
-                                        driver_name = d_full
-                                if driver_name == "Unassigned":
-                                    driver_name = self.get_driver_for_vehicle(v_num, numeric_id)
+                        is_offline = self.is_vehicle_offline(numeric_id) or self.is_vehicle_offline(v_num)
+                        offline_reason = self.offline_reasons.get(numeric_id) or self.offline_reasons.get(v_num) or ""
 
-                                # Motion & speed
-                                state_obj = av.get("current_state") or {}
-                                raw_state = (state_obj.get("entity_state") or "stationary").lower()
-                                speed_kph = state_obj.get("ground_speed_kph")
-                                speed_mph = round(speed_kph * 0.621371, 1) if (speed_kph is not None and speed_kph > 0) else 0
+                        if health_sub == "vg_powered_off":
+                            is_offline = True
+                            offline_reason = "Dashcam powered off (reported by Motive)"
+                            self.flag_offline_vehicle(numeric_id, offline_reason)
+                            self.flag_offline_vehicle(v_num, offline_reason)
 
-                                if raw_state in ["driving", "in_transit", "moving"] or speed_mph > 2.0:
-                                    motion_category = "transit"
-                                    status_label = f"In Transit ({speed_mph} mph)" if speed_mph > 0 else "In Transit"
-                                elif raw_state in ["idling", "idle"]:
-                                    motion_category = "idle"
-                                    status_label = "Idling"
-                                else:
-                                    motion_category = "stationary"
-                                    status_label = "Stationary"
+                        is_active_cam = has_camera and not is_offline and health_status != "check_power"
+                        cam_color = "#1B6C2D" if is_active_cam else ""
 
-                                # Camera & health
-                                dash_info = av.get("dashcam_info") or {}
-                                has_camera = bool(av.get("camera") or dash_info)
-                                health_sub = dash_info.get("health_sub_status_key") or ""
-                                health_status = dash_info.get("health_status_key") or ""
+                        prev = prev_cache.get(numeric_id) or prev_cache.get(v_num)
+                        driver_img = prev.get("driver_camera_img") if prev else None
+                        road_img = prev.get("road_camera_img") if prev else None
+                        camera_status = "Powered Off" if is_offline else ("Live" if (driver_img or road_img) else "Ready to refresh")
+                        if prev and prev.get("camera_status"):
+                            camera_status = prev["camera_status"]
+                        if is_offline:
+                            camera_status = "Powered Off"
 
-                                is_offline = self.is_vehicle_offline(numeric_id) or self.is_vehicle_offline(v_num)
-                                offline_reason = self.offline_reasons.get(numeric_id) or self.offline_reasons.get(v_num) or ""
+                        v_dict = {
+                            "id": numeric_id,
+                            "numeric_id": numeric_id,
+                            "name": v_num,
+                            "mmy": v_mmy,
+                            "driver": driver_name,
+                            "group": grp_name,
+                            "organization": org_name,
+                            "org_id": org_id,
+                            "status": status_label,
+                            "has_camera": has_camera,
+                            "cam_color": cam_color,
+                            "is_active_cam": is_active_cam,
+                            "summary_href": f"#/fleetview/vehicles/summary/{numeric_id}",
+                            "vehicle_url": f"https://app.gomotive.com/en-US/#/fleetview/map/vehicle/{numeric_id}-null-null/{numeric_id}/live",
+                            "live_url": f"https://app.gomotive.com/en-US/#/fleetview/map/vehicle/{numeric_id}-null-null/{numeric_id}/live",
+                            "is_offline": is_offline,
+                            "offline_reason": offline_reason,
+                            "driver_camera_img": driver_img,
+                            "road_camera_img": road_img,
+                            "camera_status": camera_status,
+                            "last_refreshed_iso": prev.get("last_refreshed_iso") if prev else None,
+                            "last_refreshed_ts": prev.get("last_refreshed_ts") if prev else None,
+                            "motive_camera_time": prev.get("motive_camera_time") if prev else None,
+                            "eld_identifier": prev.get("eld_identifier") if prev else None,
+                            "eld_device_id": av.get("eld_device_id"),
+                            "motion_category": motion_category,
+                            "speed_mph": speed_mph,
+                            "last_motion_update": state_obj.get("entity_state_last_updated") or datetime.datetime.now().isoformat()
+                        }
+                        self._attach_latest_snapshots(v_dict)
+                        v_dict["is_target"] = self.evaluate_is_target(v_dict)
+                        extracted.append(v_dict)
 
-                                if health_sub == "vg_powered_off":
-                                    is_offline = True
-                                    offline_reason = "Dashcam powered off (reported by Motive)"
-                                    self.flag_offline_vehicle(numeric_id, offline_reason)
-                                    self.flag_offline_vehicle(v_num, offline_reason)
-
-                                is_active_cam = has_camera and not is_offline and health_status != "check_power"
-                                cam_color = "#1B6C2D" if is_active_cam else ""
-
-                                # Preserve snapshot images and refresh history from cache
-                                prev = prev_cache.get(numeric_id) or prev_cache.get(v_num)
-                                driver_img = prev.get("driver_camera_img") if prev else None
-                                road_img = prev.get("road_camera_img") if prev else None
-                                camera_status = "Powered Off" if is_offline else ("Live" if (driver_img or road_img) else "Ready to refresh")
-                                if prev and prev.get("camera_status"):
-                                    camera_status = prev["camera_status"]
-                                if is_offline:
-                                    camera_status = "Powered Off"
-
-                                v_dict = {
-                                    "id": numeric_id,
-                                    "numeric_id": numeric_id,
-                                    "name": v_num,
-                                    "mmy": v_mmy,
-                                    "driver": driver_name,
-                                    "group": grp_name,
-                                    "organization": org_name,
-                                    "org_id": org_id,
-                                    "status": status_label,
-                                    "has_camera": has_camera,
-                                    "cam_color": cam_color,
-                                    "is_active_cam": is_active_cam,
-                                    "summary_href": f"#/fleetview/vehicles/summary/{numeric_id}",
-                                    "vehicle_url": f"https://app.gomotive.com/en-US/#/fleetview/map/vehicle/{numeric_id}-null-null/{numeric_id}/live",
-                                    "live_url": f"https://app.gomotive.com/en-US/#/fleetview/map/vehicle/{numeric_id}-null-null/{numeric_id}/live",
-                                    "is_offline": is_offline,
-                                    "offline_reason": offline_reason,
-                                    "driver_camera_img": driver_img,
-                                    "road_camera_img": road_img,
-                                    "camera_status": camera_status,
-                                    "last_refreshed_iso": prev.get("last_refreshed_iso") if prev else None,
-                                    "last_refreshed_ts": prev.get("last_refreshed_ts") if prev else None,
-                                    "motive_camera_time": prev.get("motive_camera_time") if prev else None,
-                                    "eld_identifier": prev.get("eld_identifier") if prev else None,
-                                    "eld_device_id": av.get("eld_device_id"),
-                                    "motion_category": motion_category,
-                                    "speed_mph": speed_mph,
-                                    "last_motion_update": state_obj.get("entity_state_last_updated") or datetime.datetime.now().isoformat()
-                                }
-                                self._attach_latest_snapshots(v_dict)
-                                v_dict["is_target"] = self.evaluate_is_target(v_dict)
-                                extracted.append(v_dict)
-
-                            api_success = True
-                            self.cached_vehicles = extracted
-                            self.last_motion_pull_ts = time.time()
-                            self.save_cached_vehicles()
-                    except Exception as e:
-                        logger.warning(f"Error during direct Motive API sync: {e}")
-
-                if not api_success:
+                    self.cached_vehicles = extracted
+                    self.last_motion_pull_ts = time.time()
+                    self.save_cached_vehicles()
+                else:
                     logger.info("Using cached vehicles as fallback for sync...")
                     for v in self.cached_vehicles:
                         self._attach_latest_snapshots(v)
@@ -1146,7 +918,6 @@ class MotiveClient:
     async def _refresh_camera_via_api(self, vehicle_id: str, vehicle_name: str, now_iso: str) -> Optional[Dict[str, Any]]:
         """
         Directly triggers Motive hardware live checkin and polls image metadata via REST API.
-        Returns a result dict or None if API refresh cannot proceed (falling back to Playwright).
         """
         s_vid = str(vehicle_id).strip()
         target_v = next((v for v in self.cached_vehicles if str(v.get("id")) == s_vid or v.get("name") == vehicle_name), None)
@@ -1154,7 +925,7 @@ class MotiveClient:
         if not token:
             logger.info(f"[{vehicle_name}] No x-web-user-auth token available for direct API refresh.")
             return None
-        # Check blackouts (2+ strikes)
+
         bo = self.camera_blackouts.get(s_vid, {})
         if bo.get("no_camera"):
             logger.info(f"[{vehicle_name}] Camera marked dead/blackout in camera_blackout.json, skipping API refresh.")
@@ -1174,7 +945,6 @@ class MotiveClient:
                 "notes": "Skipped due to repeated camera failures."
             }
 
-        # Check cached vehicle record
         if target_v and target_v.get("has_camera") is False:
             return {
                 "vehicle_id": vehicle_id,
@@ -1222,7 +992,6 @@ class MotiveClient:
         }
 
         async with httpx.AsyncClient(timeout=15.0) as client:
-            # 1. Trigger hardware refresh
             try:
                 ref_resp = await client.post(
                     "https://api.keeptruckin.com/api/w2/live_checkin/refresh",
@@ -1237,7 +1006,6 @@ class MotiveClient:
                 logger.warning(f"[{vehicle_name}] Live checkin POST failed: {e}")
                 return None
 
-            # 2. Poll /follow endpoint for up to 25 seconds
             follow_url = f"https://api.keeptruckin.com/api/w3/vehicles/{s_vid}/follow?include_groups=true"
             initial_recv = None
             last_recv = None
@@ -1273,9 +1041,13 @@ class MotiveClient:
                     last_recv = recv_iso
 
                     cams = {}
-                    for k in ['driver_facing_image_url', 'front_facing_image_url', 'front_narrow_facing_image_url', 'rear_facing_image_url', 'side_left_image_url', 'side_right_image_url']:
+                    for k in [
+                        "driver_facing_image_url", "front_facing_image_url",
+                        "front_narrow_facing_image_url", "rear_facing_image_url",
+                        "side_left_image_url", "side_right_image_url"
+                    ]:
                         if md.get(k):
-                            cams[k.replace('_image_url', '')] = md[k]
+                            cams[k.replace("_image_url", "")] = md[k]
                     last_cams = cams
 
                     age = _img_age_min(recv_iso)
@@ -1289,7 +1061,6 @@ class MotiveClient:
                 except Exception as e:
                     logger.debug(f"[{vehicle_name}] Follow poll exception: {e}")
 
-            # 3. Download images
             driver_img_path = None
             road_img_path = None
             clean_name = re.sub(r"[^a-zA-Z0-9_-]", "_", vehicle_name)
@@ -1320,7 +1091,6 @@ class MotiveClient:
                 except Exception as e:
                     logger.warning(f"[{vehicle_name}] Road camera download error: {e}")
 
-            # 4. Return result
             age_min = _img_age_min(last_recv)
             is_live = got_fresh or age_min < 3.0
 
@@ -1364,18 +1134,13 @@ class MotiveClient:
                     "notes": reason
                 }
 
-    async def refresh_camera_for_vehicle(self, vehicle_id: str, vehicle_name: str, allow_browser_fallback: bool = False) -> Dict[str, Any]:
-        """
-        Refreshes cameras for a vehicle using direct Motive API with optional fallback to Playwright browser tab.
-        By default, allow_browser_fallback is False to ensure background/batch operations NEVER spawn browser tabs.
-        """
+    async def refresh_camera_for_vehicle(self, vehicle_id: str, vehicle_name: str) -> Dict[str, Any]:
+        """Refreshes cameras for a vehicle using the direct Motive REST API."""
         now_iso = datetime.datetime.now().isoformat()
 
-        # 1. Attempt high-speed direct API refresh
         try:
             api_res = await self._refresh_camera_via_api(vehicle_id, vehicle_name, now_iso)
             if api_res is not None:
-                # Update in-memory cache and persist
                 for cv in self.cached_vehicles:
                     if str(cv.get("id")) == str(vehicle_id) or cv.get("name") == vehicle_name:
                         if api_res.get("driver_camera_img"):
@@ -1395,352 +1160,21 @@ class MotiveClient:
         except Exception as e:
             logger.warning(f"[{vehicle_name}] Direct API refresh exception ({e}).")
 
-        # If browser fallback is disabled, return clean failure without spawning any tabs
-        if not allow_browser_fallback:
-            logger.info(f"[{vehicle_name}] Direct API refresh returned no result; browser fallback is disabled.")
-            return {
-                "vehicle_id": vehicle_id,
-                "vehicle_name": vehicle_name,
-                "success": False,
-                "status_text": "Powered Off",
-                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "timestamp_iso": now_iso,
-                "timestamp_ms": int(time.time() * 1000),
-                "driver_camera_img": None,
-                "road_camera_img": None,
-                "motive_camera_time": "Offline",
-                "is_offline": True,
-                "offline_reason": "API refresh could not obtain image",
-                "notes": "API refresh unavailable"
-            }
-
-        # 2. Fallback to Playwright DOM manipulation ONLY if explicitly allowed
-        if not self.context:
-            await self.initialize()
-
-        result = {
-            "vehicle_id": vehicle_id,
-            "vehicle_name": vehicle_name,
-            "success": False,
-            "status_text": "Failed",
-            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "timestamp_iso": now_iso,
-            "driver_camera_img": None,
-            "road_camera_img": None,
-            "notes": ""
-        }
-
-        # Find cached vehicle to get its numeric ID
-        target_v = next((v for v in self.cached_vehicles if v["name"] == vehicle_name or v["id"] == vehicle_id), None)
-        v_num_id = target_v.get("numeric_id") if target_v else vehicle_id
-        if not v_num_id:
-            m = re.search(r"\d+", vehicle_id)
-            v_num_id = m.group(0) if m else vehicle_id
-
-        live_url = f"https://app.gomotive.com/en-US/#/fleetview/map/vehicle/{v_num_id}-null-null/{v_num_id}/live"
-
-        page = None
-        try:
-            async with self._lock:
-                page = await self.context.new_page()
-
-            # Run the camera refresh with 45s safety timeout
-            refreshed_result = await asyncio.wait_for(
-                self._do_refresh_camera(page, vehicle_id, vehicle_name, live_url, now_iso),
-                timeout=45.0
-            )
-
-            # Evaluate if camera is live or powered off / dormant
-            is_live = bool(
-                refreshed_result.get("is_live")
-                or is_live_status(refreshed_result.get("status_text", ""))
-                or is_live_status(refreshed_result.get("motive_camera_time", ""))
-            )
-            if is_live:
-                self.unflag_vehicle(vehicle_id)
-                self.unflag_vehicle(vehicle_name)
-                refreshed_result["is_offline"] = False
-                refreshed_result["offline_reason"] = ""
-            else:
-                # Camera did not update to live (powered off or dormant)
-                reason = refreshed_result.get("motive_camera_time") or refreshed_result.get("status_text") or "Camera did not update to live"
-                self.flag_offline_vehicle(vehicle_id, f"Powered off ({reason})")
-                self.flag_offline_vehicle(vehicle_name, f"Powered off ({reason})")
-                refreshed_result["is_offline"] = True
-                refreshed_result["offline_reason"] = f"Powered off ({reason})"
-                refreshed_result["status_text"] = "Powered Off"
-
-            # Directly update cached_vehicles and persist to disk
-            for cv in self.cached_vehicles:
-                if str(cv.get("id")) == str(vehicle_id) or cv.get("name") == vehicle_name:
-                    if refreshed_result.get("driver_camera_img"):
-                        cv["driver_camera_img"] = refreshed_result["driver_camera_img"]
-                    if refreshed_result.get("road_camera_img"):
-                        cv["road_camera_img"] = refreshed_result["road_camera_img"]
-                    cv["camera_status"] = refreshed_result.get("status_text") or cv.get("camera_status")
-                    cv["motive_camera_time"] = refreshed_result.get("motive_camera_time") or cv.get("motive_camera_time")
-                    cv["last_refreshed"] = refreshed_result.get("timestamp") or cv.get("last_refreshed")
-                    cv["last_refreshed_iso"] = refreshed_result.get("timestamp_iso") or cv.get("last_refreshed_iso")
-                    cv["last_refreshed_ts"] = refreshed_result.get("timestamp_ms") or cv.get("last_refreshed_ts")
-                    cv["is_offline"] = refreshed_result.get("is_offline", False)
-                    cv["offline_reason"] = refreshed_result.get("offline_reason", "")
-                    break
-            self.save_cached_vehicles()
-
-            return refreshed_result
-        except asyncio.TimeoutError:
-            logger.warning(f"Refresh for {vehicle_name} reached 45s timeout limit. Attempting emergency snapshot grab...")
-            if page:
-                try:
-                    em_data = await page.evaluate('''() => {
-                        const btn = document.querySelector("[data-testid='refresh-all-btn']");
-                        let text = '';
-                        if (btn && btn.parentElement) {
-                            const span = btn.parentElement.querySelector("span.black-60, span");
-                            text = span ? span.innerText.trim() : '';
-                        }
-                        const d = document.querySelector("img[src*='driver_facing']");
-                        const r = document.querySelector("img[src*='front_facing']");
-                        return { text, dSrc: d ? d.src : null, rSrc: r ? r.src : null };
-                    }''')
-                    clean_name = re.sub(r"[^a-zA-Z0-9_-]", "_", vehicle_name)
-                    now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                    snapshots_dir = config.SNAPSHOTS_DIR
-                    snapshots_dir.mkdir(exist_ok=True)
-                    async with httpx.AsyncClient() as client:
-                        if em_data.get("dSrc"):
-                            rd = await client.get(em_data["dSrc"], timeout=8)
-                            if rd.status_code == 200:
-                                fn = f"{clean_name}_driver_{now_str}.jpg"
-                                (snapshots_dir / fn).write_bytes(rd.content)
-                                result["driver_camera_img"] = f"/snapshots/{fn}"
-                                result["success"] = True
-                        if em_data.get("rSrc"):
-                            rr = await client.get(em_data["rSrc"], timeout=8)
-                            if rr.status_code == 200:
-                                fn = f"{clean_name}_road_{now_str}.jpg"
-                                (snapshots_dir / fn).write_bytes(rr.content)
-                                result["road_camera_img"] = f"/snapshots/{fn}"
-                                result["success"] = True
-                    em_time = em_data.get("text", "")
-                    if em_time and re.search(r"\b(live|just now|< 1m ago|\d+\s*[smhd]|\d+/\d+)\b", em_time, re.I):
-                        result["motive_camera_time"] = em_time
-                        result["timestamp_ms"] = parse_motive_time_to_unix(em_time)
-                        result["timestamp_iso"] = datetime.datetime.fromtimestamp(result["timestamp_ms"] / 1000.0).isoformat()
-                        result["status_text"] = em_time
-                except Exception as ex:
-                    logger.debug(f"Emergency grab error: {ex}")
-
-            self.flag_offline_vehicle(vehicle_id, "Powered off / Timed out (45s)")
-            self.flag_offline_vehicle(vehicle_name, "Powered off / Timed out (45s)")
-            result["is_offline"] = True
-            result["offline_reason"] = "Powered off / Timed out (45s)"
-            result["status_text"] = "Powered Off"
-            result["notes"] = "Camera did not respond to live checkin."
-            return result
-        except Exception as e:
-            logger.error(f"Error refreshing {vehicle_name}: {e}")
-            self.flag_offline_vehicle(vehicle_id, f"Error: {e}")
-            self.flag_offline_vehicle(vehicle_name, f"Error: {e}")
-            result["is_offline"] = True
-            result["offline_reason"] = f"Error: {e}"
-            result["status_text"] = "Powered Off"
-            result["notes"] = str(e)
-            return result
-        finally:
-            if page:
-                async with self._lock:
-                    self._claimed_pages.discard(id(page))
-                try:
-                    await page.close()
-                except Exception:
-                    pass
-
-    async def _do_refresh_camera(self, page: Page, vehicle_id: str, vehicle_name: str, live_url: str, now_iso: str) -> Dict[str, Any]:
-        """Core camera refresh execution logic on a dedicated background page/tab."""
-        logger.info(f"[{vehicle_name}] Loading camera view in background...")
-        if page.url != live_url and "live" not in page.url:
-            await page.goto(live_url, wait_until="domcontentloaded")
-            await asyncio.sleep(2.0)
-
-        # 1. Wait up to 18 seconds for the camera drawer and initial frames to load
-        driver_url = None
-        road_url = None
-        initial_driver_url = None
-        initial_road_url = None
-        cam_time = ""
-        is_live = False
-
-        for i in range(18):
-            await asyncio.sleep(1.0)
-            drawer_data = await page.evaluate('''() => {
-                const btn = document.querySelector("[data-testid='refresh-all-btn']");
-                let text = '';
-                if (btn && btn.parentElement) {
-                    const span = btn.parentElement.querySelector("span.black-60, span");
-                    text = span ? span.innerText.trim() : '';
-                }
-                const d = document.querySelector("img[src*='driver_facing']");
-                const r = document.querySelector("img[src*='front_facing']");
-                
-                return {
-                    hasBtn: !!btn,
-                    text: text,
-                    dSrc: d ? d.src : null,
-                    rSrc: r ? r.src : null
-                };
-            }''')
-
-            if drawer_data.get("dSrc"): 
-                driver_url = drawer_data["dSrc"]
-                initial_driver_url = drawer_data["dSrc"]
-            if drawer_data.get("rSrc"): 
-                road_url = drawer_data["rSrc"]
-                initial_road_url = drawer_data["rSrc"]
-            if drawer_data.get("text") and re.search(r"\b(live|just now|< 1m ago|\d+\s*[smhd]|\d+/\d+)\b", drawer_data["text"], re.I):
-                cam_time = drawer_data["text"]
-
-            # Trigger refresh instantly via JavaScript DOM evaluate (never hangs!)
-            if drawer_data.get("hasBtn"):
-                logger.info(f"[{vehicle_name}] Initial Gomotive camera time: '{cam_time}'. Triggering 'Refresh all' via JS...")
-                await page.evaluate('''() => {
-                    const btn = document.querySelector("[data-testid='refresh-all-btn']");
-                    if (btn) btn.click();
-                }''')
-                break
-
-        # 2. Poll for fresh live image URLs to arrive in the DOM (up to 20 seconds)
-        # Note: Gomotive often flips the text indicator to "Live" several seconds BEFORE
-        # the <img> tags are actually swapped with the new S3 presigned URLs.
-        # We must actively wait for the image URLs (dSrc / rSrc) to change!
-        first_change_step = None
-        for step in range(40):  # 40 * 0.5s = 20s
-            await asyncio.sleep(0.5)
-            status_data = await page.evaluate('''() => {
-                const btn = document.querySelector("[data-testid='refresh-all-btn']");
-                let text = '';
-                if (btn && btn.parentElement) {
-                    const span = btn.parentElement.querySelector("span.black-60, span");
-                    text = span ? span.innerText.trim() : '';
-                }
-                const d = document.querySelector("img[src*='driver_facing']");
-                const r = document.querySelector("img[src*='front_facing']");
-                
-                return {
-                    text: text,
-                    dSrc: d ? d.src : null,
-                    rSrc: r ? r.src : null
-                };
-            }''')
-
-            cur_d = status_data.get("dSrc")
-            cur_r = status_data.get("rSrc")
-            status_text = status_data.get("text", "")
-
-            if cur_d: driver_url = cur_d
-            if cur_r: road_url = cur_r
-            if status_text and re.search(r"\b(live|just now|< 1m ago|\d+\s*[smhd]|\d+/\d+)\b", status_text, re.I):
-                cam_time = status_text
-
-            if is_live_status(status_text):
-                is_live = True
-                cam_time = "Live"
-
-            # Check whether image URLs have changed relative to pre-refresh initial values
-            d_changed = bool(cur_d and cur_d != initial_driver_url)
-            r_changed = bool(cur_r and cur_r != initial_road_url)
-
-            if d_changed or r_changed:
-                is_live = True
-                cam_time = "Live"
-
-            # Case A: Both cameras were initially present
-            if initial_driver_url and initial_road_url:
-                if d_changed and r_changed:
-                    logger.info(f"[{vehicle_name}] Both camera images updated with fresh frames ({step * 0.5:.1f}s)!")
-                    break
-                elif d_changed or r_changed:
-                    if first_change_step is None:
-                        first_change_step = step
-                    # Wait up to 3 seconds for the second camera to update as well
-                    if step - first_change_step >= 6:
-                        logger.info(f"[{vehicle_name}] Camera image updated (d_changed={d_changed}, r_changed={r_changed}) ({step * 0.5:.1f}s)!")
-                        break
-
-            # Case B: Only one camera was initially present
-            elif initial_driver_url or initial_road_url:
-                if d_changed or r_changed:
-                    logger.info(f"[{vehicle_name}] Fresh camera image updated ({step * 0.5:.1f}s)!")
-                    break
-
-            # Case C: Neither camera was initially present
-            elif cur_d or cur_r:
-                logger.info(f"[{vehicle_name}] Camera images loaded ({step * 0.5:.1f}s)!")
-                break
-
-        # 3. Download the snapshots (fresh live frames or current available frames)
-        await asyncio.sleep(0.5)
-        clean_name = re.sub(r"[^a-zA-Z0-9_-]", "_", vehicle_name)
-        timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        snapshots_dir = config.SNAPSHOTS_DIR
-        snapshots_dir.mkdir(exist_ok=True)
-
-        driver_file_path = None
-        road_file_path = None
-        success = False
-
-        async with httpx.AsyncClient() as client:
-            if driver_url:
-                try:
-                    r = await client.get(driver_url, timeout=10)
-                    if r.status_code == 200:
-                        fname = f"{clean_name}_driver_{timestamp_str}.jpg"
-                        (snapshots_dir / fname).write_bytes(r.content)
-                        driver_file_path = f"/snapshots/{fname}"
-                        success = True
-                except Exception as e:
-                    logger.error(f"[{vehicle_name}] Error downloading driver image: {e}")
-
-            if road_url:
-                try:
-                    r = await client.get(road_url, timeout=10)
-                    if r.status_code == 200:
-                        fname = f"{clean_name}_road_{timestamp_str}.jpg"
-                        (snapshots_dir / fname).write_bytes(r.content)
-                        road_file_path = f"/snapshots/{fname}"
-                        success = True
-                except Exception as e:
-                    logger.error(f"[{vehicle_name}] Error downloading road image: {e}")
-
-        # 4. Calculate exact UNIX timestamp (ms) and ISO string based strictly on Gomotive's camera time
-        if is_live:
-            last_ts = int(time.time() * 1000)
-            status_text = "Live"
-            cam_time = "Live"
-        else:
-            last_ts = parse_motive_time_to_unix(cam_time)
-            status_text = cam_time or ("Updated" if success else "No Camera Response")
-
-        calculated_iso = datetime.datetime.fromtimestamp(last_ts / 1000.0).isoformat()
-
         return {
             "vehicle_id": vehicle_id,
             "vehicle_name": vehicle_name,
-            "success": success,
-            "is_live": is_live,
-            "status_text": status_text,
-            "motive_camera_time": cam_time or ("Live" if is_live else ""),
+            "success": False,
+            "status_text": "Powered Off",
             "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "timestamp_iso": calculated_iso,
-            "timestamp_ms": last_ts,
-            "driver_camera_img": driver_file_path,
-            "road_camera_img": road_file_path,
-            "notes": "" if is_live else f"Gomotive image time: {cam_time}"
+            "timestamp_iso": now_iso,
+            "timestamp_ms": int(time.time() * 1000),
+            "driver_camera_img": None,
+            "road_camera_img": None,
+            "motive_camera_time": "Offline",
+            "is_offline": True,
+            "offline_reason": "API refresh could not obtain image",
+            "notes": "API refresh unavailable"
         }
 
     async def close(self):
-        if self.playwright:
-            await self.playwright.stop()
-        self.context = None
-        self.playwright = None
+        pass

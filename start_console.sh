@@ -25,7 +25,7 @@ fi
 
 PYTHON_BIN=".venv/bin/python"
 
-if ! "$PYTHON_BIN" -c "import fastapi, uvicorn, httpx, playwright, aiofiles" >/dev/null 2>&1; then
+if ! "$PYTHON_BIN" -c "import fastapi, uvicorn, httpx, websockets" >/dev/null 2>&1; then
     echo "[*] Installing required packages from requirements.txt..."
     "$PYTHON_BIN" -m pip install --upgrade pip
     "$PYTHON_BIN" -m pip install -r requirements.txt

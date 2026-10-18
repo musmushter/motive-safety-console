@@ -29,6 +29,7 @@ data/violations.json
 data/driver_mappings.json
 data/fleet_associations.json
 data/offline_cameras.json
+data/camera_blackout.json
 *.log
 
 # Editor & OS files

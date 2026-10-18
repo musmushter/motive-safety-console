@@ -80,7 +80,7 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 :check_deps
-".venv\Scripts\python.exe" -c "import fastapi, uvicorn, httpx, playwright, aiofiles" >nul 2>&1
+".venv\Scripts\python.exe" -c "import fastapi, uvicorn, httpx, websockets" >nul 2>&1
 if !errorlevel! neq 0 (
     echo [*] Installing required packages from requirements.txt...
     ".venv\Scripts\python.exe" -m pip install --upgrade pip

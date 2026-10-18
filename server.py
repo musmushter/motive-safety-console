@@ -1,13 +1,11 @@
 import asyncio
-import json
 import logging
 import time
 from datetime import datetime
-from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import List, Optional
 
 from fastapi import FastAPI, BackgroundTasks, HTTPException
-from fastapi.responses import HTMLResponse, FileResponse, Response
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -32,7 +30,7 @@ app.add_middleware(
 app.mount("/snapshots", StaticFiles(directory=str(config.SNAPSHOTS_DIR)), name="snapshots")
 app.mount("/static", StaticFiles(directory=str(config.STATIC_DIR)), name="static")
 
-motive_client = MotiveClient(headless=False)
+motive_client = MotiveClient()
 motion_task: Optional[asyncio.Task] = None
 
 async def motion_polling_loop():
